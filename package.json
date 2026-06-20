@@ -5,6 +5,7 @@
   "main": "src/server.ts",
   "scripts": {
     "start": "tsx src/server.ts",
+    "test": "tsx src/test.ts",
     "typecheck": "tsc --noEmit"
   },
   "keywords": [],

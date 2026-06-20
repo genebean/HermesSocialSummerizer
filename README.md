@@ -54,6 +54,12 @@ The server loads `.env` automatically at startup via `dotenv`.
 
 ## Running
 
+Verify every client method works against your live credentials:
+
+```bash
+npm test
+```
+
 The server speaks MCP over stdio. Run it directly to sanity-check:
 
 ```bash
