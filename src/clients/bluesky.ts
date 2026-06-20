@@ -1,5 +1,8 @@
 /**
  * Read-only Bluesky client using @atproto/api.
+ * Only read methods are called: getTimeline, getActorLikes, getAuthorFeed,
+ * getFollows, getProfile. No post/like/repost/follow method exists here.
+ *
  * Authenticated mode: app_password supplied → uses real session with auto token refresh.
  * Public mode: no app_password → reads via public AppView (no credentials stored).
  *
@@ -10,7 +13,6 @@ import { AtpAgent } from "@atproto/api";
 
 const PUBLIC_SERVICE = "https://public.api.bsky.app";
 const AUTH_SERVICE = "https://bsky.social";
-const FEED_CHUNK = 5;
 
 export interface BlueskyPost {
   uri: string;
@@ -18,6 +20,12 @@ export interface BlueskyPost {
   created_at: string;
   text: string;
   likes: number;
+}
+
+// Shape of the record field inside a Bluesky post object.
+interface BlueskyRecord {
+  createdAt?: string;
+  text?: string;
 }
 
 export class BlueskyReadClient {
@@ -96,14 +104,17 @@ export class BlueskyReadClient {
     const did = await this.resolveDid();
     const followsResp = await this.agent.app.bsky.graph.getFollows({ actor: did, limit: 100 });
     const follows = followsResp.data.follows;
-    const posts: BlueskyPost[] = [];
 
-    for (let i = 0; i < follows.length; i += FEED_CHUNK) {
-      const chunk = follows.slice(i, i + FEED_CHUNK);
-      const results = await Promise.all(
-        chunk.map((f) => this.agent.app.bsky.feed.getAuthorFeed({ actor: f.did, limit: 5 }))
-      );
-      posts.push(...results.flatMap((r) => r.data.feed.map((item) => simplifyPost(item.post))));
+    // Fetch all author feeds in parallel; individual failures don't abort the rest.
+    const results = await Promise.allSettled(
+      follows.map((f) => this.agent.app.bsky.feed.getAuthorFeed({ actor: f.did, limit: 5 }))
+    );
+
+    const posts: BlueskyPost[] = [];
+    for (const r of results) {
+      if (r.status === "fulfilled") {
+        posts.push(...r.value.data.feed.map((item) => simplifyPost(item.post)));
+      }
     }
 
     posts.sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
@@ -112,12 +123,12 @@ export class BlueskyReadClient {
 }
 
 function simplifyPost(post: { uri: string; author: { handle: string }; record: unknown; likeCount?: number }): BlueskyPost {
-  const record = post.record as Record<string, unknown>;
+  const record = post.record as BlueskyRecord;
   return {
     uri: post.uri,
     author: post.author.handle,
-    created_at: (record.createdAt as string) ?? "",
-    text: (record.text as string) ?? "",
+    created_at: record.createdAt ?? "",
+    text: record.text ?? "",
     likes: post.likeCount ?? 0,
   };
 }

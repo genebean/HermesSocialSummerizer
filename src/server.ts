@@ -19,7 +19,13 @@ import { NostrReadClient, npubToHex } from "./clients/nostr.js";
 
 // ── Client registries ────────────────────────────────────────────────────────
 
-function buildClients(config: ReturnType<typeof loadConfig>) {
+type Clients = {
+  mastodon: Record<string, MastodonReadClient>;
+  bluesky: Record<string, BlueskyReadClient>;
+  nostr: Record<string, NostrReadClient>;
+};
+
+function buildClients(config: ReturnType<typeof loadConfig>): Clients {
   const mastodon: Record<string, MastodonReadClient> = {};
   for (const a of config.mastodon) {
     mastodon[a.id] = new MastodonReadClient(a.instance_url, a.access_token);
@@ -43,8 +49,16 @@ let clients = buildClients(config);
 
 // ── Handler helpers ──────────────────────────────────────────────────────────
 
-const aid = (a: Record<string, unknown>) => a.account_id as string;
-const lim = (a: Record<string, unknown>, def: number) => Math.min((a.limit as number) ?? def, 200);
+function aid(a: Record<string, unknown>): string {
+  const v = a.account_id;
+  if (typeof v !== "string" || !v) throw new Error('Missing or invalid required argument: "account_id"');
+  return v;
+}
+
+function lim(a: Record<string, unknown>, def: number): number {
+  const v = Number(a.limit);
+  return Math.min(Number.isFinite(v) && v > 0 ? Math.floor(v) : def, 200);
+}
 
 function requireClient<T>(registry: Record<string, T>, accountId: string, platform: string): T {
   if (!(accountId in registry)) throw new Error(`Unknown ${platform} account_id: "${accountId}"`);
@@ -58,7 +72,7 @@ const server = new Server(
   { capabilities: { tools: {} } }
 );
 
-const LIMIT_SCHEMA = { type: "number", maximum: 200 } as const;
+const LIMIT_SCHEMA = { type: "number", minimum: 1, maximum: 200 } as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -197,9 +211,21 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     switch (name) {
       case "list_accounts":
         result = {
-          mastodon: Object.keys(clients.mastodon),
-          bluesky: Object.keys(clients.bluesky),
-          nostr: Object.keys(clients.nostr),
+          mastodon: Object.keys(clients.mastodon).map((id) => ({
+            id,
+            read_only_guarantee: "credential-enforced (OAuth token registered with read scope only)",
+          })),
+          bluesky: Object.keys(clients.bluesky).map((id) => ({
+            id,
+            authenticated: clients.bluesky[id].authenticated,
+            read_only_guarantee: clients.bluesky[id].authenticated
+              ? "code-enforced (only read API methods called; app passwords are not scope-limited by the platform)"
+              : "public AppView (unauthenticated, no credentials stored)",
+          })),
+          nostr: Object.keys(clients.nostr).map((id) => ({
+            id,
+            read_only_guarantee: "structural (public key only; no private key stored means publishing is cryptographically impossible)",
+          })),
         };
         break;
 
@@ -207,9 +233,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const client = requireClient(clients.mastodon, aid(a), "mastodon");
         const state = loadState();
         const cursor = getCursor(state, "mastodon", aid(a));
-        const posts = await client.homeTimeline(lim(a, 40), cursor.since_id as string | undefined);
+        const posts = await client.homeTimeline(lim(a, 40), cursor.since_id);
         if (posts.length > 0) {
-          const maxId = posts.reduce((m, p) => (BigInt(p.id) > BigInt(m) ? p.id : m), posts[0].id);
+          let maxId = posts[0].id;
+          for (const p of posts) {
+            try {
+              if (BigInt(p.id) > BigInt(maxId)) maxId = p.id;
+            } catch { /* non-integer id, skip */ }
+          }
           setCursor(state, "mastodon", aid(a), { since_id: maxId });
           saveState(state);
         }
@@ -233,7 +264,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const client = requireClient(clients.bluesky, aid(a), "bluesky");
         const state = loadState();
         const cursor = getCursor(state, "bluesky", aid(a));
-        const posts = await client.timeline(lim(a, 40), cursor.since as string | undefined);
+        const posts = await client.timeline(lim(a, 40), cursor.since);
         if (posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
           setCursor(state, "bluesky", aid(a), { since: maxTs });
@@ -258,7 +289,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const posts = await client.followingFeed(
           (a.hours as number) ?? 24,
           lim(a, 100),
-          cursor.since_ts as number | undefined
+          cursor.since_ts
         );
         if (posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
@@ -286,33 +317,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "reload_config": {
-        // Cache-busting query forces Node's ESM loader to re-evaluate each
-        // module, picking up TypeScript source changes without a restart.
-        const v = Date.now();
-        const u = (p: string) => `${new URL(p, import.meta.url).href}?v=${v}`;
-
         // Close old Nostr WebSocket connections before replacing clients.
         for (const c of Object.values(clients.nostr)) c.close();
 
-        const [cfgMod, mstdnMod, bskyMod, nsrMod] = await Promise.all([
-          import(u("./config.js")) as Promise<typeof import("./config.js")>,
-          import(u("./clients/mastodon.js")) as Promise<typeof import("./clients/mastodon.js")>,
-          import(u("./clients/bluesky.js")) as Promise<typeof import("./clients/bluesky.js")>,
-          import(u("./clients/nostr.js")) as Promise<typeof import("./clients/nostr.js")>,
-        ]);
-
-        config = cfgMod.loadConfig();
-        clients = {
-          mastodon: Object.fromEntries(
-            config.mastodon.map((a) => [a.id, new mstdnMod.MastodonReadClient(a.instance_url, a.access_token)])
-          ),
-          bluesky: Object.fromEntries(
-            config.bluesky.map((a) => [a.id, new bskyMod.BlueskyReadClient(a.handle, a.app_password)])
-          ),
-          nostr: Object.fromEntries(
-            config.nostr.map((a) => [a.id, new nsrMod.NostrReadClient(nsrMod.npubToHex(a.npub), a.relays)])
-          ),
-        } as typeof clients;
+        config = loadConfig();
+        clients = buildClients(config);
 
         result = {
           mastodon: Object.keys(clients.mastodon),

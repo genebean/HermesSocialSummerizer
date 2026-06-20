@@ -24,7 +24,9 @@ function expandEnv(value: string | undefined, required = true): string {
 
 const MastodonAccountSchema = z.object({
   id: z.string().min(1),
-  instance_url: z.string().url(),
+  instance_url: z.string().url().refine((u) => u.startsWith("https://"), {
+    message: "instance_url must use https://",
+  }),
   access_token: z.string().min(1),
 });
 
@@ -37,7 +39,11 @@ const BlueskyAccountSchema = z.object({
 const NostrAccountSchema = z.object({
   id: z.string().min(1),
   npub: z.string().startsWith("npub1"),
-  relays: z.array(z.string().url()).min(1),
+  relays: z.array(
+    z.string().url().refine((u) => u.startsWith("wss://"), {
+      message: "relay URL must use wss://",
+    })
+  ).min(1),
 });
 
 const AppConfigSchema = z.object({
@@ -53,19 +59,31 @@ export type AppConfig = z.infer<typeof AppConfigSchema>;
 
 export function loadConfig(path?: string): AppConfig {
   const configPath = path ?? process.env.SOCIAL_READER_CONFIG ?? join(HERE, "config.yaml");
-  const raw = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
+  const rawYaml = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
+
+  if (typeof rawYaml !== "object" || Array.isArray(rawYaml)) {
+    throw new Error("config.yaml must be a YAML mapping at the top level");
+  }
+
+  const raw = rawYaml as Record<string, unknown>;
 
   // Expand ${ENV_VAR} references before schema validation so zod sees real values.
   const expanded = {
-    mastodon: (raw.mastodon ?? []).map((a: Record<string, string>) => ({
-      ...a,
-      access_token: expandEnv(a.access_token),
-    })),
-    bluesky: (raw.bluesky ?? []).map((a: Record<string, string>) => ({
-      ...a,
-      app_password: expandEnv(a.app_password, false) || undefined,
-    })),
-    nostr: (raw.nostr ?? []).map((a: Record<string, unknown>) => ({ ...a })),
+    mastodon: Array.isArray(raw.mastodon)
+      ? raw.mastodon.map((a: Record<string, string>) => ({
+          ...a,
+          access_token: expandEnv(a.access_token),
+        }))
+      : [],
+    bluesky: Array.isArray(raw.bluesky)
+      ? raw.bluesky.map((a: Record<string, string>) => ({
+          ...a,
+          app_password: expandEnv(a.app_password, false) || undefined,
+        }))
+      : [],
+    nostr: Array.isArray(raw.nostr)
+      ? raw.nostr.map((a: Record<string, unknown>) => ({ ...a }))
+      : [],
   };
 
   const result = AppConfigSchema.safeParse(expanded);

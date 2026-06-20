@@ -49,8 +49,13 @@ export class MastodonReadClient {
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
     const resp = await fetch(url, { headers: this.headers });
     if (!resp.ok) {
-      const status = resp.statusText.slice(0, 100).replace(/[\r\n]/g, "");
-      throw new Error(`Mastodon ${path}: ${resp.status} ${status}`);
+      // statusText is empty on HTTP/2; try the JSON body's error field instead.
+      let detail = resp.statusText.slice(0, 100).replace(/[\r\n]/g, "");
+      try {
+        const body = await resp.clone().json() as Record<string, unknown>;
+        if (typeof body.error === "string") detail = body.error.slice(0, 200);
+      } catch { /* non-JSON error body, fall through to statusText */ }
+      throw new Error(`Mastodon ${path}: ${resp.status} ${detail}`.trimEnd());
     }
     return resp.json() as Promise<T>;
   }
@@ -81,9 +86,11 @@ export class MastodonReadClient {
 
   async reblogs(limit = 40): Promise<MastodonReblog[]> {
     const id = await this.getMeId();
+    // The /accounts/:id/statuses endpoint is capped at 40 per page by the API.
+    // We filter for reblogs afterwards, so the actual count returned may be less than `limit`.
     const statuses = await withRetry(() =>
       this.get<RawStatus[]>(`/api/v1/accounts/${id}/statuses`, {
-        limit: limit * 2,
+        limit: Math.min(limit, 40),
         exclude_reblogs: "false",
       })
     );

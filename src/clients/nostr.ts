@@ -102,7 +102,6 @@ export class NostrReadClient {
 
     return notes
       .sort((a, b) => b.created_at - a.created_at)
-      .slice(0, limit)
       .map(simplifyNote);
   }
 
@@ -121,12 +120,18 @@ export class NostrReadClient {
       let amount: number | null = null;
       let message = "";
       if (zapRequestJson) {
-        try {
-          const req = JSON.parse(zapRequestJson);
-          message = req.content ?? "";
-          const amountTag = (req.tags as string[][])?.find((t) => t[0] === "amount");
-          if (amountTag) amount = Math.round(Number(amountTag[1]) / 1000);
-        } catch { /* malformed zap request */ }
+        if (zapRequestJson.length > 4096) {
+          console.error(`[nostr] Oversized zap description on event ${e.id} (${zapRequestJson.length} bytes), skipping parse`);
+        } else {
+          try {
+            const req = JSON.parse(zapRequestJson);
+            message = req.content ?? "";
+            const amountTag = (req.tags as string[][])?.find((t) => t[0] === "amount");
+            if (amountTag) amount = Math.round(Number(amountTag[1]) / 1000);
+          } catch (err) {
+            console.error(`[nostr] Malformed zap request on event ${e.id}:`, err);
+          }
+        }
       }
       return {
         id: e.id,
@@ -143,7 +148,8 @@ export class NostrReadClient {
     // Kind 10003: NIP-51 replaceable bookmark list. Fetch the latest event only.
     const events = await this.fetchEvents({ kinds: [10003], authors: [this.pubkey], limit: 1 });
     if (events.length === 0) return [];
-    const latest = events.reduce((a, b) => (a.created_at > b.created_at ? a : b));
+    // limit: 1 was sent to the relay, so events[0] is the only (or latest) result.
+    const latest = events[0];
     return latest.tags
       .filter((t) => t[0] === "e" || t[0] === "a")
       .map((t): NostrBookmark =>
