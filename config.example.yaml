@@ -1,0 +1,42 @@
+# Only read-capable credentials belong in here.
+#
+#   mastodon: access_token from an OAuth app registered with the
+#             "read" scope ONLY (instance Settings > Development).
+#   bluesky:  app_password is OPTIONAL. Omit it (or leave blank) and
+#             this account is read entirely through Bluesky's public,
+#             unauthenticated AppView -- no credential exists for it
+#             at all. Supply it only if you want the real algorithmic
+#             "Following" timeline instead of a reconstructed one.
+#   nostr:    npub (public key) ONLY. Never put an nsec/private key
+#             here -- this project has no code that could use one.
+#
+# Values like ${VAR_NAME} are expanded from environment variables at
+# load time, so the actual secrets live in your env / secrets manager,
+# not in this file.
+
+mastodon:
+  - id: main
+    instance_url: "https://mastodon.social"
+    access_token: "${MASTODON_MAIN_TOKEN}"
+  - id: work
+    instance_url: "https://fosstodon.org"
+    access_token: "${MASTODON_WORK_TOKEN}"
+
+bluesky:
+  - id: personal
+    handle: "example.bsky.social"
+    app_password: "${BSKY_PERSONAL_APP_PW}"   # optional, see notes above
+  - id: project
+    handle: "example-project.bsky.social"
+    app_password: ""                          # blank = public-only reads
+
+nostr:
+  - id: main
+    npub: "npub1exampleexampleexampleexampleexampleexampleexampleexamp"
+    relays:
+      - "wss://relay.damus.io"
+      - "wss://nos.lol"
+  - id: alt
+    npub: "npub1examplealtexamplealtexamplealtexamplealtexamplealtexa"
+    relays:
+      - "wss://relay.primal.net"
