@@ -6,7 +6,7 @@ const STATE_PATH = process.env.CURSOR_STATE_PATH ?? join(HERE, "cursor_state.jso
 
 type CursorStore = Record<string, Record<string, Record<string, unknown>>>;
 
-export function loadState(): CursorStore {
+function loadFromDisk(): CursorStore {
   if (!existsSync(STATE_PATH)) return {};
   try {
     return JSON.parse(readFileSync(STATE_PATH, "utf-8")) as CursorStore;
@@ -15,7 +15,15 @@ export function loadState(): CursorStore {
   }
 }
 
+// Loaded once at startup; mutations go through saveState which also persists to disk.
+let _state: CursorStore = loadFromDisk();
+
+export function loadState(): CursorStore {
+  return _state;
+}
+
 export function saveState(state: CursorStore): void {
+  _state = state;
   const tmp = STATE_PATH + ".tmp";
   writeFileSync(tmp, JSON.stringify(state, null, 2));
   renameSync(tmp, STATE_PATH);

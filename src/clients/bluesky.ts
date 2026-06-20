@@ -6,10 +6,11 @@
  * App passwords are NOT scope-limited on Bluesky, so store them in a dedicated,
  * revocable app password separate from your main login.
  */
-import { Agent, AtpAgent } from "@atproto/api";
+import { AtpAgent } from "@atproto/api";
 
 const PUBLIC_SERVICE = "https://public.api.bsky.app";
 const AUTH_SERVICE = "https://bsky.social";
+const FEED_CHUNK = 5;
 
 export interface BlueskyPost {
   uri: string;
@@ -20,20 +21,32 @@ export interface BlueskyPost {
 }
 
 export class BlueskyReadClient {
-  private agent: AtpAgent;
-  private authenticated = false;
-  private did?: string;
+  private readonly agent: AtpAgent;
   private readonly handle: string;
+  private readonly appPassword?: string;
+  private loginPromise?: Promise<void>;
+  private did?: string;
+  readonly authenticated: boolean;
 
   constructor(handle: string, appPassword?: string) {
     this.handle = handle;
-    if (appPassword) {
-      this.agent = new AtpAgent({ service: AUTH_SERVICE });
-      this.agent.login({ identifier: handle, password: appPassword });
-      this.authenticated = true;
-    } else {
-      this.agent = new AtpAgent({ service: PUBLIC_SERVICE });
+    this.appPassword = appPassword;
+    this.authenticated = Boolean(appPassword);
+    this.agent = new AtpAgent({ service: appPassword ? AUTH_SERVICE : PUBLIC_SERVICE });
+  }
+
+  private ensureAuth(): Promise<void> {
+    if (!this.authenticated) return Promise.resolve();
+    if (!this.loginPromise) {
+      this.loginPromise = this.agent
+        .login({ identifier: this.handle, password: this.appPassword! })
+        .then(() => undefined)
+        .catch((e) => {
+          this.loginPromise = undefined; // allow retry on next call
+          throw e;
+        });
     }
+    return this.loginPromise;
   }
 
   async timeline(limit = 40, since?: string): Promise<BlueskyPost[]> {
@@ -41,6 +54,7 @@ export class BlueskyReadClient {
     let posts: BlueskyPost[];
 
     if (this.authenticated) {
+      await this.ensureAuth();
       const resp = await this.agent.getTimeline({ limit: fetchLimit });
       posts = resp.data.feed.map((item) => simplifyPost(item.post));
     } else {
@@ -52,20 +66,16 @@ export class BlueskyReadClient {
   }
 
   async likes(limit = 40): Promise<BlueskyPost[]> {
+    await this.ensureAuth();
     const did = await this.resolveDid();
-    if (this.authenticated) {
-      const resp = await this.agent.app.bsky.feed.getActorLikes({ actor: did, limit });
-      return resp.data.feed.map((item) => simplifyPost(item.post));
-    } else {
-      const resp = await this.agent.app.bsky.feed.getActorLikes({ actor: did, limit });
-      return resp.data.feed.map((item) => simplifyPost(item.post));
-    }
+    const resp = await this.agent.app.bsky.feed.getActorLikes({ actor: did, limit });
+    return resp.data.feed.map((item) => simplifyPost(item.post));
   }
 
   async reposts(limit = 40): Promise<BlueskyPost[]> {
+    await this.ensureAuth();
     const did = await this.resolveDid();
-    const agent = this.authenticated ? this.agent : new AtpAgent({ service: PUBLIC_SERVICE });
-    const resp = await agent.app.bsky.feed.getAuthorFeed({
+    const resp = await this.agent.app.bsky.feed.getAuthorFeed({
       actor: did,
       limit: Math.min(limit * 3, 100),
     });
@@ -85,14 +95,17 @@ export class BlueskyReadClient {
   private async publicFollowingFeed(limit: number): Promise<BlueskyPost[]> {
     const did = await this.resolveDid();
     const followsResp = await this.agent.app.bsky.graph.getFollows({ actor: did, limit: 100 });
+    const follows = followsResp.data.follows;
     const posts: BlueskyPost[] = [];
-    for (const follow of followsResp.data.follows) {
-      const feedResp = await this.agent.app.bsky.feed.getAuthorFeed({
-        actor: follow.did,
-        limit: 5,
-      });
-      posts.push(...feedResp.data.feed.map((item) => simplifyPost(item.post)));
+
+    for (let i = 0; i < follows.length; i += FEED_CHUNK) {
+      const chunk = follows.slice(i, i + FEED_CHUNK);
+      const results = await Promise.all(
+        chunk.map((f) => this.agent.app.bsky.feed.getAuthorFeed({ actor: f.did, limit: 5 }))
+      );
+      posts.push(...results.flatMap((r) => r.data.feed.map((item) => simplifyPost(item.post))));
     }
+
     posts.sort((a, b) => (a.created_at > b.created_at ? -1 : 1));
     return posts.slice(0, limit);
   }

@@ -11,36 +11,15 @@ import { SimplePool } from "nostr-tools/pool";
 import { decode as bech32Decode } from "nostr-tools/nip19";
 import type { Filter } from "nostr-tools";
 
-const CONNECT_TIMEOUT = 10_000;
+const CONNECT_TIMEOUT = 4_000;
+const CONTACT_TTL_MS = 5 * 60 * 1000;
+
+type NostrEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
 
 export function npubToHex(npub: string): string {
   const decoded = bech32Decode(npub);
   if (decoded.type !== "npub") throw new Error(`Expected npub, got ${decoded.type}`);
   return decoded.data as string;
-}
-
-async function fetchEvents(relays: string[], filter: Filter): Promise<{ id: string; pubkey: string; created_at: number; content: string; tags: string[][] }[]> {
-  const pool = new SimplePool();
-  const seen = new Set<string>();
-  const events: { id: string; pubkey: string; created_at: number; content: string; tags: string[][] }[] = [];
-
-  await new Promise<void>((resolve) => {
-    pool.subscribeManyEose(relays, filter, {
-      onevent(event) {
-        if (!seen.has(event.id)) {
-          seen.add(event.id);
-          events.push(event);
-        }
-      },
-      onclose() {
-        pool.close(relays);
-        resolve();
-      },
-      maxWait: CONNECT_TIMEOUT,
-    });
-  });
-
-  return events;
 }
 
 export interface NostrNote {
@@ -56,10 +35,9 @@ export interface NostrRepost {
   reposted_event_id: string | null;
 }
 
-export interface NostrBookmark {
-  event_id: string;
-  article_addr: string | null;
-}
+export type NostrBookmark =
+  | { kind: "event"; event_id: string }
+  | { kind: "article"; article_addr: string };
 
 export interface NostrZap {
   id: string;
@@ -73,29 +51,54 @@ export interface NostrZap {
 export class NostrReadClient {
   private readonly pubkey: string;
   private readonly relays: string[];
+  private readonly pool = new SimplePool();
+  private contactCache?: { pubkeys: string[]; fetchedAt: number };
 
   constructor(pubkeyHex: string, relays: string[]) {
     this.pubkey = pubkeyHex;
     this.relays = relays;
   }
 
-  async followingFeed(hours = 24, limit = 100, sinceTs?: number): Promise<NostrNote[]> {
-    const contactEvents = await fetchEvents(this.relays, {
-      kinds: [3],
-      authors: [this.pubkey],
-      limit: 1,
+  close(): void {
+    this.pool.close(this.relays);
+  }
+
+  private async fetchEvents(filter: Filter): Promise<NostrEvent[]> {
+    const seen = new Set<string>();
+    const events: NostrEvent[] = [];
+
+    await new Promise<void>((resolve) => {
+      this.pool.subscribeManyEose(this.relays, filter, {
+        onevent(event) {
+          if (!seen.has(event.id)) {
+            seen.add(event.id);
+            events.push(event);
+          }
+        },
+        onclose() { resolve(); },
+        maxWait: CONNECT_TIMEOUT,
+      });
     });
 
-    const followed = parseContactList(contactEvents);
+    return events;
+  }
+
+  private async getFollowed(): Promise<string[]> {
+    if (this.contactCache && Date.now() - this.contactCache.fetchedAt < CONTACT_TTL_MS) {
+      return this.contactCache.pubkeys;
+    }
+    const events = await this.fetchEvents({ kinds: [3], authors: [this.pubkey], limit: 1 });
+    const pubkeys = parseContactList(events);
+    this.contactCache = { pubkeys, fetchedAt: Date.now() };
+    return pubkeys;
+  }
+
+  async followingFeed(hours = 24, limit = 100, sinceTs?: number): Promise<NostrNote[]> {
+    const followed = await this.getFollowed();
     if (followed.length === 0) return [];
 
     const since = sinceTs ?? Math.floor(Date.now() / 1000) - hours * 3600;
-    const notes = await fetchEvents(this.relays, {
-      kinds: [1],
-      authors: followed,
-      since,
-      limit,
-    });
+    const notes = await this.fetchEvents({ kinds: [1], authors: followed, since, limit });
 
     return notes
       .sort((a, b) => b.created_at - a.created_at)
@@ -104,22 +107,14 @@ export class NostrReadClient {
   }
 
   async myReactions(limit = 100): Promise<NostrNote[]> {
-    const events = await fetchEvents(this.relays, {
-      kinds: [7],
-      authors: [this.pubkey],
-      limit,
-    });
+    const events = await this.fetchEvents({ kinds: [7], authors: [this.pubkey], limit });
     return events.map(simplifyNote);
   }
 
   async myZaps(limit = 100): Promise<NostrZap[]> {
     // Kind 9735: zap receipts published by the recipient's Lightning provider.
     // The #P tag (capital P) indexes the sender's pubkey, letting us find zaps we sent.
-    const events = await fetchEvents(this.relays, {
-      kinds: [9735],
-      "#P": [this.pubkey],
-      limit,
-    } as Filter);
+    const events = await this.fetchEvents({ kinds: [9735], "#P": [this.pubkey], limit } as Filter);
 
     return events.map((e) => {
       const zapRequestJson = e.tags.find((t) => t[0] === "description")?.[1];
@@ -131,7 +126,7 @@ export class NostrReadClient {
           message = req.content ?? "";
           const amountTag = (req.tags as string[][])?.find((t) => t[0] === "amount");
           if (amountTag) amount = Math.round(Number(amountTag[1]) / 1000);
-        } catch { /* malformed */ }
+        } catch { /* malformed zap request */ }
       }
       return {
         id: e.id,
@@ -146,28 +141,20 @@ export class NostrReadClient {
 
   async myBookmarks(): Promise<NostrBookmark[]> {
     // Kind 10003: NIP-51 replaceable bookmark list. Fetch the latest event only.
-    const events = await fetchEvents(this.relays, {
-      kinds: [10003],
-      authors: [this.pubkey],
-      limit: 1,
-    });
+    const events = await this.fetchEvents({ kinds: [10003], authors: [this.pubkey], limit: 1 });
     if (events.length === 0) return [];
     const latest = events.reduce((a, b) => (a.created_at > b.created_at ? a : b));
     return latest.tags
       .filter((t) => t[0] === "e" || t[0] === "a")
-      .map((t) => ({
-        event_id: t[0] === "e" ? t[1] : "",
-        article_addr: t[0] === "a" ? t[1] : null,
-      }))
-      .filter((b) => b.event_id || b.article_addr);
+      .map((t): NostrBookmark =>
+        t[0] === "e"
+          ? { kind: "event", event_id: t[1] }
+          : { kind: "article", article_addr: t[1] }
+      );
   }
 
   async myReposts(limit = 100): Promise<NostrRepost[]> {
-    const events = await fetchEvents(this.relays, {
-      kinds: [6],
-      authors: [this.pubkey],
-      limit,
-    });
+    const events = await this.fetchEvents({ kinds: [6], authors: [this.pubkey], limit });
     return events.map((e) => ({
       id: e.id,
       created_at: e.created_at,

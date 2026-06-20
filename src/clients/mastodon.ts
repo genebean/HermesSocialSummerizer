@@ -4,7 +4,7 @@
  * Token must be scoped to "read" only at the OAuth app level.
  */
 
-async function withRetry<T>(fn: () => Promise<T>, retries = 3, backoff = 500): Promise<T> {
+async function withRetry<T>(fn: () => Promise<T>, retries = 3, backoff = 100): Promise<T> {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await fn();
@@ -48,7 +48,10 @@ export class MastodonReadClient {
     const url = new URL(`${this.base}${path}`);
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
     const resp = await fetch(url, { headers: this.headers });
-    if (!resp.ok) throw new Error(`Mastodon ${path}: ${resp.status} ${resp.statusText}`);
+    if (!resp.ok) {
+      const status = resp.statusText.slice(0, 100).replace(/[\r\n]/g, "");
+      throw new Error(`Mastodon ${path}: ${resp.status} ${status}`);
+    }
     return resp.json() as Promise<T>;
   }
 

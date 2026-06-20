@@ -41,12 +41,24 @@ function buildClients(config: ReturnType<typeof loadConfig>) {
 let config = loadConfig();
 let clients = buildClients(config);
 
+// ── Handler helpers ──────────────────────────────────────────────────────────
+
+const aid = (a: Record<string, unknown>) => a.account_id as string;
+const lim = (a: Record<string, unknown>, def: number) => Math.min((a.limit as number) ?? def, 200);
+
+function requireClient<T>(registry: Record<string, T>, accountId: string, platform: string): T {
+  if (!(accountId in registry)) throw new Error(`Unknown ${platform} account_id: "${accountId}"`);
+  return registry[accountId];
+}
+
 // ── MCP server setup ─────────────────────────────────────────────────────────
 
 const server = new Server(
   { name: "social-reader", version: "2.0.0" },
   { capabilities: { tools: {} } }
 );
+
+const LIMIT_SCHEMA = { type: "number", maximum: 200 } as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -60,10 +72,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch recent home-timeline posts for a configured Mastodon account.",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 40 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
         required: ["account_id"],
       },
     },
@@ -72,10 +81,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Mastodon account's own favourites (engagement history).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 40 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
         required: ["account_id"],
       },
     },
@@ -84,10 +90,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Mastodon account's saved bookmarks (strong engagement signal).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 40 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
         required: ["account_id"],
       },
     },
@@ -96,10 +99,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Mastodon account's own reblogs/boosts (engagement history).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 40 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
         required: ["account_id"],
       },
     },
@@ -108,10 +108,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch recent following-feed posts for a configured Bluesky account.",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 40 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
         required: ["account_id"],
       },
     },
@@ -120,10 +117,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Bluesky account's own likes (engagement history).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 40 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
         required: ["account_id"],
       },
     },
@@ -132,10 +126,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Bluesky account's own reposts (engagement history).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 40 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
         required: ["account_id"],
       },
     },
@@ -147,7 +138,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           account_id: { type: "string" },
           hours: { type: "number", default: 24 },
-          limit: { type: "number", default: 100 },
+          limit: { ...LIMIT_SCHEMA, default: 100 },
         },
         required: ["account_id"],
       },
@@ -157,9 +148,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Nostr npub's NIP-51 bookmark list (kind 10003) — strong engagement signal.",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-        },
+        properties: { account_id: { type: "string" } },
         required: ["account_id"],
       },
     },
@@ -168,10 +157,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Nostr npub's own published reactions/likes (engagement history).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 100 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 100 } },
         required: ["account_id"],
       },
     },
@@ -180,10 +166,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Nostr npub's own reposts/kind-6 events (engagement history).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 100 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 100 } },
         required: ["account_id"],
       },
     },
@@ -192,10 +175,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch zaps this Nostr npub has sent (kind 9735 receipts via relay #P tag — engagement history).",
       inputSchema: {
         type: "object",
-        properties: {
-          account_id: { type: "string" },
-          limit: { type: "number", default: 50 },
-        },
+        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 50 } },
         required: ["account_id"],
       },
     },
@@ -224,15 +204,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "mastodon_home_timeline": {
+        const client = requireClient(clients.mastodon, aid(a), "mastodon");
         const state = loadState();
-        const cursor = getCursor(state, "mastodon", a.account_id as string);
-        const posts = await clients.mastodon[a.account_id as string].homeTimeline(
-          (a.limit as number) ?? 40,
-          cursor.since_id as string | undefined
-        );
+        const cursor = getCursor(state, "mastodon", aid(a));
+        const posts = await client.homeTimeline(lim(a, 40), cursor.since_id as string | undefined);
         if (posts.length > 0) {
           const maxId = posts.reduce((m, p) => (BigInt(p.id) > BigInt(m) ? p.id : m), posts[0].id);
-          setCursor(state, "mastodon", a.account_id as string, { since_id: maxId });
+          setCursor(state, "mastodon", aid(a), { since_id: maxId });
           saveState(state);
         }
         result = posts;
@@ -240,27 +218,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "mastodon_bookmarks":
-        result = await clients.mastodon[a.account_id as string].bookmarks((a.limit as number) ?? 40);
+        result = await requireClient(clients.mastodon, aid(a), "mastodon").bookmarks(lim(a, 40));
         break;
 
       case "mastodon_favourites":
-        result = await clients.mastodon[a.account_id as string].favourites((a.limit as number) ?? 40);
+        result = await requireClient(clients.mastodon, aid(a), "mastodon").favourites(lim(a, 40));
         break;
 
       case "mastodon_reblogs":
-        result = await clients.mastodon[a.account_id as string].reblogs((a.limit as number) ?? 40);
+        result = await requireClient(clients.mastodon, aid(a), "mastodon").reblogs(lim(a, 40));
         break;
 
       case "bluesky_timeline": {
+        const client = requireClient(clients.bluesky, aid(a), "bluesky");
         const state = loadState();
-        const cursor = getCursor(state, "bluesky", a.account_id as string);
-        const posts = await clients.bluesky[a.account_id as string].timeline(
-          (a.limit as number) ?? 40,
-          cursor.since as string | undefined
-        );
+        const cursor = getCursor(state, "bluesky", aid(a));
+        const posts = await client.timeline(lim(a, 40), cursor.since as string | undefined);
         if (posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
-          setCursor(state, "bluesky", a.account_id as string, { since: maxTs });
+          setCursor(state, "bluesky", aid(a), { since: maxTs });
           saveState(state);
         }
         result = posts;
@@ -268,24 +244,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "bluesky_likes":
-        result = await clients.bluesky[a.account_id as string].likes((a.limit as number) ?? 40);
+        result = await requireClient(clients.bluesky, aid(a), "bluesky").likes(lim(a, 40));
         break;
 
       case "bluesky_reposts":
-        result = await clients.bluesky[a.account_id as string].reposts((a.limit as number) ?? 40);
+        result = await requireClient(clients.bluesky, aid(a), "bluesky").reposts(lim(a, 40));
         break;
 
       case "nostr_following_feed": {
+        const client = requireClient(clients.nostr, aid(a), "nostr");
         const state = loadState();
-        const cursor = getCursor(state, "nostr", a.account_id as string);
-        const posts = await clients.nostr[a.account_id as string].followingFeed(
+        const cursor = getCursor(state, "nostr", aid(a));
+        const posts = await client.followingFeed(
           (a.hours as number) ?? 24,
-          (a.limit as number) ?? 100,
+          lim(a, 100),
           cursor.since_ts as number | undefined
         );
         if (posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
-          setCursor(state, "nostr", a.account_id as string, { since_ts: maxTs });
+          setCursor(state, "nostr", aid(a), { since_ts: maxTs });
           saveState(state);
         }
         result = posts;
@@ -293,19 +270,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "nostr_my_bookmarks":
-        result = await clients.nostr[a.account_id as string].myBookmarks();
+        result = await requireClient(clients.nostr, aid(a), "nostr").myBookmarks();
         break;
 
       case "nostr_my_reactions":
-        result = await clients.nostr[a.account_id as string].myReactions((a.limit as number) ?? 100);
+        result = await requireClient(clients.nostr, aid(a), "nostr").myReactions(lim(a, 100));
         break;
 
       case "nostr_my_reposts":
-        result = await clients.nostr[a.account_id as string].myReposts((a.limit as number) ?? 100);
+        result = await requireClient(clients.nostr, aid(a), "nostr").myReposts(lim(a, 100));
         break;
 
       case "nostr_my_zaps":
-        result = await clients.nostr[a.account_id as string].myZaps((a.limit as number) ?? 100);
+        result = await requireClient(clients.nostr, aid(a), "nostr").myZaps(lim(a, 100));
         break;
 
       case "reload_config": {
@@ -314,12 +291,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const v = Date.now();
         const u = (p: string) => `${new URL(p, import.meta.url).href}?v=${v}`;
 
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const [cfgMod, mstdnMod, bskyMod, nsrMod]: any[] = await Promise.all([
-          import(u("./config.js")),
-          import(u("./clients/mastodon.js")),
-          import(u("./clients/bluesky.js")),
-          import(u("./clients/nostr.js")),
+        // Close old Nostr WebSocket connections before replacing clients.
+        for (const c of Object.values(clients.nostr)) c.close();
+
+        const [cfgMod, mstdnMod, bskyMod, nsrMod] = await Promise.all([
+          import(u("./config.js")) as Promise<typeof import("./config.js")>,
+          import(u("./clients/mastodon.js")) as Promise<typeof import("./clients/mastodon.js")>,
+          import(u("./clients/bluesky.js")) as Promise<typeof import("./clients/bluesky.js")>,
+          import(u("./clients/nostr.js")) as Promise<typeof import("./clients/nostr.js")>,
         ]);
 
         config = cfgMod.loadConfig();
