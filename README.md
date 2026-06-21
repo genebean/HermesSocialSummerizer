@@ -110,6 +110,16 @@ Every tool except `list_accounts` and `reload_config` requires `account_id`
 optional `limit` (default 40 for Mastodon/Bluesky, 100 for Nostr).
 `nostr_following_feed` also accepts `hours` (default 24).
 
+Response-size controls are available for agent-friendly summaries:
+
+- Mastodon tools omit raw HTML fields (`text_html`, `original_text_html`) by
+  default. Pass `include_html: true` when an agent explicitly needs the source
+  HTML rather than the plain-text fields.
+- Mastodon, Bluesky, and content-returning Nostr tools accept
+  `max_content_length`. When set, long `text`, `original_text`, or `content`
+  fields are truncated with a suffix such as `…[+123 chars]` so the caller can
+  tell how much text was omitted.
+
 ## Cursor state
 
 The three timeline tools (`mastodon_home_timeline`, `bluesky_timeline`,

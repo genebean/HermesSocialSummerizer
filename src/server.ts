@@ -16,6 +16,7 @@ import { loadState, saveState, getCursor, setCursor } from "./state.js";
 import { MastodonReadClient } from "./clients/mastodon.js";
 import { BlueskyReadClient } from "./clients/bluesky.js";
 import { NostrReadClient, npubToHex } from "./clients/nostr.js";
+import { clean } from "./clean.js";
 
 // ── Client registries ────────────────────────────────────────────────────────
 
@@ -70,6 +71,11 @@ function requireClient<T>(registry: Record<string, T>, accountId: string, platfo
   return registry[accountId];
 }
 
+function mxl(a: Record<string, unknown>): number | undefined {
+  const v = Number(a.max_content_length);
+  return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
+}
+
 // ── MCP server setup ─────────────────────────────────────────────────────────
 
 const server = new Server(
@@ -83,6 +89,16 @@ const ADVANCE_CURSOR_SCHEMA = {
   description: "If false, fetch posts without advancing the cursor (safe for debugging or partial analysis). Default: true.",
   default: true,
 } as const;
+const INCLUDE_HTML_SCHEMA = {
+  type: "boolean",
+  description: "Include raw HTML fields (text_html, original_text_html). Default: false (omits them to reduce token usage).",
+  default: false,
+} as const;
+const MAX_CONTENT_LENGTH_SCHEMA = {
+  type: "number",
+  minimum: 1,
+  description: "Truncate text/content fields to this many characters. Omit for no truncation.",
+} as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -93,52 +109,60 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mastodon_home_timeline",
-      description: "Fetch recent home-timeline posts for a configured Mastodon account. Returns plain text with engagement counts, mentions, hashtags, and link previews.",
+      description: "Fetch recent home-timeline posts for a configured Mastodon account. Returns plain text with engagement counts, mentions, hashtags, and link previews. HTML fields omitted by default.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          include_html: INCLUDE_HTML_SCHEMA,
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
     },
     {
       name: "mastodon_favourites",
-      description: "Fetch this Mastodon account's own favourites (engagement history).",
+      description: "Fetch this Mastodon account's own favourites (engagement history). HTML fields omitted by default.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           max_id: { type: "string", description: "Return results older than this post ID (for pagination)." },
+          include_html: INCLUDE_HTML_SCHEMA,
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
     },
     {
       name: "mastodon_bookmarks",
-      description: "Fetch this Mastodon account's saved bookmarks (strong engagement signal).",
+      description: "Fetch this Mastodon account's saved bookmarks (strong engagement signal). HTML fields omitted by default.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           max_id: { type: "string", description: "Return results older than this post ID (for pagination)." },
+          include_html: INCLUDE_HTML_SCHEMA,
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
     },
     {
       name: "mastodon_reblogs",
-      description: "Fetch this Mastodon account's own reblogs/boosts (engagement history). Returns next_max_id for pagination.",
+      description: "Fetch this Mastodon account's own reblogs/boosts (engagement history). Returns next_max_id for pagination. HTML fields omitted by default.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           max_id: { type: "string", description: "Return statuses older than this ID (use next_max_id from a previous response)." },
+          include_html: INCLUDE_HTML_SCHEMA,
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
@@ -152,6 +176,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
@@ -165,6 +190,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           cursor: { type: "string", description: "Pagination cursor from a previous call." },
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
@@ -178,6 +204,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           cursor: { type: "string", description: "Pagination cursor from a previous response." },
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
@@ -197,6 +224,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             description: "If true, fetch reaction, repost, and zap counts for each note via an extra relay query. Counts are approximate. Default: false.",
             default: false,
           },
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
       },
@@ -245,6 +273,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           account_id: { type: "string" },
           event_id: { type: "string", description: "Hex event ID to fetch." },
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id", "event_id"],
       },
@@ -261,6 +290,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             items: { type: "string" },
             description: "List of hex event IDs to fetch (max 50).",
           },
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id", "event_ids"],
       },
@@ -285,6 +315,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         properties: {
           account_id: { type: "string" },
           article_addr: { type: "string", description: 'NIP-51 article address in "30023:<pubkey>:<d-tag>" format, as returned by nostr_my_bookmarks.' },
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id", "article_addr"],
       },
@@ -315,7 +346,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
-  const a = args as Record<string, unknown>;
+  const a = args;
 
   try {
     let result: unknown;
@@ -357,24 +388,41 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           setCursor(state, "mastodon", accountId, { since_id: maxId });
           saveState(state);
         }
-        result = posts;
+        const ih = a.include_html === true;
+        const ml = mxl(a);
+        result = posts.map((p) => clean(p, ih, ml));
         break;
       }
 
-      case "mastodon_bookmarks":
-        result = await requireClient(clients.mastodon, aid(a), "mastodon")
+      case "mastodon_bookmarks": {
+        const posts = await requireClient(clients.mastodon, aid(a), "mastodon")
           .bookmarks(lim(a, 40), str(a, "max_id"));
+        const ih = a.include_html === true;
+        const ml = mxl(a);
+        result = posts.map((p) => clean(p, ih, ml));
         break;
+      }
 
-      case "mastodon_favourites":
-        result = await requireClient(clients.mastodon, aid(a), "mastodon")
+      case "mastodon_favourites": {
+        const posts = await requireClient(clients.mastodon, aid(a), "mastodon")
           .favourites(lim(a, 40), str(a, "max_id"));
+        const ih = a.include_html === true;
+        const ml = mxl(a);
+        result = posts.map((p) => clean(p, ih, ml));
         break;
+      }
 
-      case "mastodon_reblogs":
-        result = await requireClient(clients.mastodon, aid(a), "mastodon")
+      case "mastodon_reblogs": {
+        const r = await requireClient(clients.mastodon, aid(a), "mastodon")
           .reblogs(lim(a, 40), str(a, "max_id"));
+        const ih = a.include_html === true;
+        const ml = mxl(a);
+        result = {
+          next_max_id: r.next_max_id,
+          reblogs: r.reblogs.map((p) => clean(p, ih, ml)),
+        };
         break;
+      }
 
       case "bluesky_timeline": {
         const accountId = aid(a);
@@ -387,19 +435,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           setCursor(state, "bluesky", accountId, { since: maxTs });
           saveState(state);
         }
-        result = posts;
+        const ml = mxl(a);
+        result = ml ? posts.map((p) => clean(p, true, ml)) : posts;
         break;
       }
 
-      case "bluesky_likes":
-        result = await requireClient(clients.bluesky, aid(a), "bluesky")
+      case "bluesky_likes": {
+        const r = await requireClient(clients.bluesky, aid(a), "bluesky")
           .likes(lim(a, 40), str(a, "cursor"));
+        const ml = mxl(a);
+        result = ml ? { ...r, posts: r.posts.map((p) => clean(p, true, ml)) } : r;
         break;
+      }
 
-      case "bluesky_reposts":
-        result = await requireClient(clients.bluesky, aid(a), "bluesky")
+      case "bluesky_reposts": {
+        const r = await requireClient(clients.bluesky, aid(a), "bluesky")
           .reposts(lim(a, 40), str(a, "cursor"));
+        const ml = mxl(a);
+        result = ml ? { ...r, posts: r.posts.map((p) => clean(p, true, ml)) } : r;
         break;
+      }
 
       case "nostr_following_feed": {
         const accountId = aid(a);
@@ -417,7 +472,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           setCursor(state, "nostr", accountId, { since_ts: maxTs });
           saveState(state);
         }
-        result = posts;
+        const ml = mxl(a);
+        result = ml ? posts.map((p) => clean(p, true, ml)) : posts;
         break;
       }
 
@@ -440,7 +496,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "nostr_get_event": {
         const eventId = str(a, "event_id");
         if (!eventId) throw new Error('Missing required argument: "event_id"');
-        result = await requireClient(clients.nostr, aid(a), "nostr").getEvent(eventId);
+        const r = await requireClient(clients.nostr, aid(a), "nostr").getEvent(eventId);
+        const ml = mxl(a);
+        result = r && ml ? clean(r, true, ml) : r;
         break;
       }
 
@@ -448,7 +506,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const ids = a.event_ids;
         if (!Array.isArray(ids) || ids.length === 0) throw new Error('Missing or empty required argument: "event_ids"');
         const validIds = ids.filter((id): id is string => typeof id === "string").slice(0, 50);
-        result = await requireClient(clients.nostr, aid(a), "nostr").getEvents(validIds);
+        const notes = await requireClient(clients.nostr, aid(a), "nostr").getEvents(validIds);
+        const ml = mxl(a);
+        result = ml ? notes.map((p) => clean(p, true, ml)) : notes;
         break;
       }
 
@@ -462,7 +522,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "nostr_get_article": {
         const articleAddr = str(a, "article_addr");
         if (!articleAddr) throw new Error('Missing required argument: "article_addr"');
-        result = await requireClient(clients.nostr, aid(a), "nostr").getArticle(articleAddr);
+        const r = await requireClient(clients.nostr, aid(a), "nostr").getArticle(articleAddr);
+        const ml = mxl(a);
+        result = r && ml ? clean(r, true, ml) : r;
         break;
       }
 

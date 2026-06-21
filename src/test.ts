@@ -10,6 +10,7 @@ import { loadConfig } from "./config.js";
 import { MastodonReadClient, type MastodonPost, type MastodonReblog } from "./clients/mastodon.js";
 import { BlueskyReadClient, type BlueskyPost } from "./clients/bluesky.js";
 import { NostrReadClient, npubToHex, type NostrNote, type NostrArticle } from "./clients/nostr.js";
+import { clean, trunc } from "./clean.js";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -393,6 +394,79 @@ if (config.nostr.length === 0) skip("nostr.*", "no nostr accounts configured");
 
 // Close Nostr pools
 for (const c of nostrClients) c.close();
+
+// ── Unit tests: clean() / trunc() ────────────────────────────────────────────
+
+await run("clean.strips_text_html_by_default", async () => {
+  const post = { id: "1", text: "hello", text_html: "<p>hello</p>", author: "user" };
+  const out = clean(post, false);
+  if ("text_html" in out) throw new Error("text_html should be absent when includeHtml=false");
+  if (out.text !== "hello") throw new Error("text should be preserved");
+  return "ok";
+});
+
+await run("clean.keeps_text_html_when_include_html_true", async () => {
+  const post = { id: "1", text: "hello", text_html: "<p>hello</p>", author: "user" };
+  const out = clean(post, true);
+  if (out.text_html !== "<p>hello</p>") throw new Error("text_html should be present when includeHtml=true");
+  return "ok";
+});
+
+await run("clean.strips_original_text_html_by_default", async () => {
+  const reblog = { id: "1", original_text: "hi", original_text_html: "<p>hi</p>" };
+  const out = clean(reblog, false);
+  if ("original_text_html" in out) throw new Error("original_text_html should be absent");
+  if (out.original_text !== "hi") throw new Error("original_text should be preserved");
+  return "ok";
+});
+
+await run("clean.truncates_text_when_max_len_set", async () => {
+  const post = { text: "a".repeat(200), author: "x" };
+  const out = clean(post, true, 50);
+  const t = out.text as string;
+  if (!t.includes("…[+")) throw new Error("truncated text should include ellipsis suffix");
+  if (t.startsWith("a".repeat(51))) throw new Error("text should be cut at 50 chars");
+  return `truncated to: ${t.length} chars`;
+});
+
+await run("clean.truncates_content_when_max_len_set", async () => {
+  const article = { title: "My Article", content: "x".repeat(5000) };
+  const out = clean(article, true, 100);
+  const c = out.content as string;
+  if (!c.includes("…[+")) throw new Error("truncated content should include ellipsis suffix");
+  if (out.title !== "My Article") throw new Error("non-content field should be unchanged");
+  return "ok";
+});
+
+await run("clean.no_truncation_when_text_short_enough", async () => {
+  const post = { text: "short text", author: "x" };
+  const out = clean(post, true, 200);
+  if (out.text !== "short text") throw new Error("short text should be unchanged");
+  return "ok";
+});
+
+await run("clean.passes_through_unknown_fields", async () => {
+  const post = { id: "1", likes: 42, tags: ["a", "b"], nested: { x: 1 } };
+  const out = clean(post as Record<string, unknown>, true);
+  if (out.id !== "1") throw new Error("id should pass through");
+  if (out.likes !== 42) throw new Error("likes should pass through");
+  if (!Array.isArray(out.tags)) throw new Error("tags should pass through as array");
+  return "ok";
+});
+
+await run("trunc.returns_unchanged_when_short", async () => {
+  const result = trunc("hello", 10);
+  if (result !== "hello") throw new Error(`expected "hello", got "${result}"`);
+  return "ok";
+});
+
+await run("trunc.truncates_with_correct_suffix", async () => {
+  const s = "a".repeat(20);
+  const result = trunc(s, 10);
+  if (!result.startsWith("a".repeat(10))) throw new Error("should start with first 10 chars");
+  if (!result.includes("…[+10 chars]")) throw new Error(`unexpected suffix in: ${result}`);
+  return "ok";
+});
 
 // ── Report ────────────────────────────────────────────────────────────────────
 
