@@ -87,24 +87,33 @@ export class BlueskyReadClient {
     return posts.slice(0, limit);
   }
 
-  async likes(limit = 40, cursor?: string): Promise<BlueskyPost[]> {
+  async likes(limit = 40, cursor?: string): Promise<{ posts: BlueskyPost[]; cursor?: string }> {
     await this.ensureAuth();
     const did = await this.resolveDid();
     const resp = await this.agent.app.bsky.feed.getActorLikes({ actor: did, limit, cursor });
-    return resp.data.feed.map((item) => simplifyPost(item.post));
+    return {
+      posts: resp.data.feed.map((item) => simplifyPost(item.post)),
+      cursor: resp.data.cursor,
+    };
   }
 
-  async reposts(limit = 40): Promise<BlueskyPost[]> {
+  async reposts(limit = 40, cursor?: string): Promise<{ posts: BlueskyPost[]; cursor?: string }> {
     await this.ensureAuth();
     const did = await this.resolveDid();
+    // getAuthorFeed returns all post types; we filter for repost reasons.
+    // Each page may contain few or no reposts depending on posting frequency.
     const resp = await this.agent.app.bsky.feed.getAuthorFeed({
       actor: did,
       limit: Math.min(limit * 3, 100),
+      cursor,
     });
-    return resp.data.feed
-      .filter((item) => item.reason?.$type === "app.bsky.feed.defs#reasonRepost")
-      .slice(0, limit)
-      .map((item) => simplifyPost(item.post));
+    return {
+      posts: resp.data.feed
+        .filter((item) => item.reason?.$type === "app.bsky.feed.defs#reasonRepost")
+        .slice(0, limit)
+        .map((item) => simplifyPost(item.post)),
+      cursor: resp.data.cursor,
+    };
   }
 
   private async resolveDid(): Promise<string> {

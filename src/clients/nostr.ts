@@ -75,6 +75,20 @@ export interface NostrProfile {
   nip05: string | null;
 }
 
+export interface NostrArticle {
+  id: string;
+  nostr_uri: string;
+  author: string;
+  author_npub: string;
+  published_at: number | null;
+  title: string | null;
+  summary: string | null;
+  content: string;
+  image: string | null;
+  hashtags: string[];
+  urls: string[];
+}
+
 export class NostrReadClient {
   private readonly pubkey: string;
   private readonly relays: string[];
@@ -270,6 +284,38 @@ export class NostrReadClient {
       picture: str("picture"),
       website: str("website"),
       nip05: str("nip05"),
+    };
+  }
+
+  async getArticle(articleAddr: string): Promise<NostrArticle | null> {
+    // article_addr format from NIP-51 bookmark lists: "30023:<pubkey_hex>:<d-tag>[:<relay_hint>]"
+    const parts = articleAddr.split(":");
+    if (parts[0] !== "30023" || parts.length < 3) {
+      throw new Error(`Invalid article_addr: "${articleAddr}". Expected "30023:<pubkey>:<d-tag>".`);
+    }
+    const [, pubkey, dTag] = parts;
+    const events = await this.fetchEvents({
+      kinds: [30023],
+      authors: [pubkey],
+      "#d": [dTag],
+      limit: 1,
+    } as Filter);
+    if (events.length === 0) return null;
+    const e = events[0];
+    const tag = (name: string): string | null => e.tags.find((t) => t[0] === name)?.[1] ?? null;
+    const publishedAt = tag("published_at");
+    return {
+      id: e.id,
+      nostr_uri: `nostr:${noteEncode(e.id)}`,
+      author: e.pubkey,
+      author_npub: npubEncode(e.pubkey),
+      published_at: publishedAt !== null ? Number(publishedAt) : null,
+      title: tag("title"),
+      summary: tag("summary"),
+      content: e.content,
+      image: tag("image"),
+      hashtags: e.tags.filter((t) => t[0] === "t").map((t) => t[1]),
+      urls: [...new Set(e.content.match(URL_RE) ?? [])],
     };
   }
 }

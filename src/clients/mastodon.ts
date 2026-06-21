@@ -107,20 +107,23 @@ export class MastodonReadClient {
     return statuses.map(simplifyStatus);
   }
 
-  async reblogs(limit = 40): Promise<MastodonReblog[]> {
+  async reblogs(limit = 40, maxId?: string): Promise<{ reblogs: MastodonReblog[]; next_max_id?: string }> {
     const id = await this.getMeId();
     // The /accounts/:id/statuses endpoint is capped at 40 per page by the API.
-    // We filter for reblogs afterwards, so the actual count returned may be less than `limit`.
+    // We filter for reblogs afterwards, so the reblog count per page may be less than `limit`.
+    // next_max_id is the oldest status ID seen (not just reblogs), for use as max_id on the next call.
+    const params: Record<string, string | number> = {
+      limit: Math.min(limit, 40),
+      exclude_reblogs: "false",
+    };
+    if (maxId) params.max_id = maxId;
     const statuses = await withRetry(() =>
-      this.get<RawStatus[]>(`/api/v1/accounts/${id}/statuses`, {
-        limit: Math.min(limit, 40),
-        exclude_reblogs: "false",
-      })
+      this.get<RawStatus[]>(`/api/v1/accounts/${id}/statuses`, params)
     );
-    return statuses
-      .filter((s) => s.reblog !== null)
-      .slice(0, limit)
-      .map(simplifyReblog);
+    return {
+      reblogs: statuses.filter((s) => s.reblog !== null).slice(0, limit).map(simplifyReblog),
+      next_max_id: statuses.length > 0 ? statuses[statuses.length - 1].id : undefined,
+    };
   }
 }
 

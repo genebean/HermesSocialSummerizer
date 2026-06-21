@@ -132,10 +132,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mastodon_reblogs",
-      description: "Fetch this Mastodon account's own reblogs/boosts (engagement history).",
+      description: "Fetch this Mastodon account's own reblogs/boosts (engagement history). Returns next_max_id for pagination.",
       inputSchema: {
         type: "object",
-        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
+        properties: {
+          account_id: { type: "string" },
+          limit: { ...LIMIT_SCHEMA, default: 40 },
+          max_id: { type: "string", description: "Return statuses older than this ID (use next_max_id from a previous response)." },
+        },
         required: ["account_id"],
       },
     },
@@ -167,10 +171,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "bluesky_reposts",
-      description: "Fetch this Bluesky account's own reposts (engagement history).",
+      description: "Fetch this Bluesky account's own reposts (engagement history). Returns cursor for pagination — each page scans the author feed and filters for reposts, so page size may be smaller than limit.",
       inputSchema: {
         type: "object",
-        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
+        properties: {
+          account_id: { type: "string" },
+          limit: { ...LIMIT_SCHEMA, default: 40 },
+          cursor: { type: "string", description: "Pagination cursor from a previous response." },
+        },
         required: ["account_id"],
       },
     },
@@ -270,6 +278,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       },
     },
     {
+      name: "nostr_get_article",
+      description: "Fetch a NIP-23 long-form article (kind 30023) by article address. Use this to dereference article_addr values returned by nostr_my_bookmarks.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          account_id: { type: "string" },
+          article_addr: { type: "string", description: 'NIP-51 article address in "30023:<pubkey>:<d-tag>" format, as returned by nostr_my_bookmarks.' },
+        },
+        required: ["account_id", "article_addr"],
+      },
+    },
+    {
+      name: "mark_seen",
+      description: "Advance the cursor for a feed without fetching — call after analyzing posts retrieved with advance_cursor: false. cursor_value is: the post id for Mastodon, the created_at ISO string for Bluesky, or the created_at unix timestamp for Nostr.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          platform: { type: "string", enum: ["mastodon", "bluesky", "nostr"] },
+          account_id: { type: "string" },
+          cursor_value: {
+            description: "Mastodon: post id (string). Bluesky: created_at ISO string. Nostr: created_at unix timestamp (number).",
+            oneOf: [{ type: "string" }, { type: "number" }],
+          },
+        },
+        required: ["platform", "account_id", "cursor_value"],
+      },
+    },
+    {
       name: "reload_config",
       description: "Reload config.yaml and reinitialize all clients without restarting the server.",
       inputSchema: { type: "object", properties: {} },
@@ -336,7 +372,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "mastodon_reblogs":
-        result = await requireClient(clients.mastodon, aid(a), "mastodon").reblogs(lim(a, 40));
+        result = await requireClient(clients.mastodon, aid(a), "mastodon")
+          .reblogs(lim(a, 40), str(a, "max_id"));
         break;
 
       case "bluesky_timeline": {
@@ -360,7 +397,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "bluesky_reposts":
-        result = await requireClient(clients.bluesky, aid(a), "bluesky").reposts(lim(a, 40));
+        result = await requireClient(clients.bluesky, aid(a), "bluesky")
+          .reposts(lim(a, 40), str(a, "cursor"));
         break;
 
       case "nostr_following_feed": {
@@ -418,6 +456,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const pubkey = str(a, "pubkey");
         if (!pubkey) throw new Error('Missing required argument: "pubkey"');
         result = await requireClient(clients.nostr, aid(a), "nostr").getProfile(pubkey);
+        break;
+      }
+
+      case "nostr_get_article": {
+        const articleAddr = str(a, "article_addr");
+        if (!articleAddr) throw new Error('Missing required argument: "article_addr"');
+        result = await requireClient(clients.nostr, aid(a), "nostr").getArticle(articleAddr);
+        break;
+      }
+
+      case "mark_seen": {
+        const platform = a.platform;
+        if (platform !== "mastodon" && platform !== "bluesky" && platform !== "nostr") {
+          throw new Error(`Invalid platform: "${String(platform)}". Must be mastodon, bluesky, or nostr.`);
+        }
+        const accountId = aid(a);
+        const cursorValue = a.cursor_value;
+        const state = loadState();
+
+        if (platform === "mastodon") {
+          if (typeof cursorValue !== "string" || !cursorValue) {
+            throw new Error("For mastodon, cursor_value must be a post id string.");
+          }
+          requireClient(clients.mastodon, accountId, "mastodon");
+          setCursor(state, "mastodon", accountId, { since_id: cursorValue });
+        } else if (platform === "bluesky") {
+          if (typeof cursorValue !== "string" || !cursorValue) {
+            throw new Error("For bluesky, cursor_value must be a created_at ISO string.");
+          }
+          requireClient(clients.bluesky, accountId, "bluesky");
+          setCursor(state, "bluesky", accountId, { since: cursorValue });
+        } else {
+          const ts = Number(cursorValue);
+          if (!Number.isFinite(ts) || ts <= 0) {
+            throw new Error("For nostr, cursor_value must be a unix timestamp (the note's created_at).");
+          }
+          requireClient(clients.nostr, accountId, "nostr");
+          setCursor(state, "nostr", accountId, { since_ts: ts });
+        }
+
+        saveState(state);
+        result = { platform, account_id: accountId, cursor_value: cursorValue };
         break;
       }
 

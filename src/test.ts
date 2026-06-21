@@ -9,7 +9,7 @@
 import { loadConfig } from "./config.js";
 import { MastodonReadClient, type MastodonPost, type MastodonReblog } from "./clients/mastodon.js";
 import { BlueskyReadClient, type BlueskyPost } from "./clients/bluesky.js";
-import { NostrReadClient, npubToHex, type NostrNote } from "./clients/nostr.js";
+import { NostrReadClient, npubToHex, type NostrNote, type NostrArticle } from "./clients/nostr.js";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -189,14 +189,23 @@ for (const acct of config.mastodon) {
   }
 
   let reblogs: MastodonReblog[] = [];
+  let reblogsNextMaxId: string | undefined;
   await run(`${p}.reblogs`, async () => {
-    reblogs = await c.reblogs(5);
+    const resp = await c.reblogs(5);
+    reblogs = resp.reblogs;
+    reblogsNextMaxId = resp.next_max_id;
     return reblogs;
   });
   if (reblogs.length > 0) {
     await run(`${p}.reblogs.shape`, async () => {
       checkMastodonReblog(reblogs[0], `${p}.reblogs[0]`);
       return `validated ${reblogs.length} reblogs`;
+    });
+  }
+  if (reblogsNextMaxId) {
+    await run(`${p}.reblogs.pagination`, async () => {
+      const resp = await c.reblogs(5, reblogsNextMaxId);
+      return resp.reblogs;
     });
   }
 }
@@ -222,8 +231,11 @@ for (const acct of config.bluesky) {
   }
 
   let likes: BlueskyPost[] = [];
+  let likesCursor: string | undefined;
   await run(`${p}.likes`, async () => {
-    likes = await c.likes(5);
+    const resp = await c.likes(5);
+    likes = resp.posts;
+    likesCursor = resp.cursor;
     return likes;
   });
   if (likes.length > 0) {
@@ -232,16 +244,31 @@ for (const acct of config.bluesky) {
       return `validated ${likes.length} posts`;
     });
   }
+  if (likesCursor) {
+    await run(`${p}.likes.pagination`, async () => {
+      const resp = await c.likes(5, likesCursor);
+      return resp.posts;
+    });
+  }
 
   let reposts: BlueskyPost[] = [];
+  let repostsCursor: string | undefined;
   await run(`${p}.reposts`, async () => {
-    reposts = await c.reposts(5);
+    const resp = await c.reposts(5);
+    reposts = resp.posts;
+    repostsCursor = resp.cursor;
     return reposts;
   });
   if (reposts.length > 0) {
     await run(`${p}.reposts.shape`, async () => {
       checkBlueskyPost(reposts[0], `${p}.reposts[0]`);
       return `validated ${reposts.length} posts`;
+    });
+  }
+  if (repostsCursor) {
+    await run(`${p}.reposts.pagination`, async () => {
+      const resp = await c.reposts(5, repostsCursor);
+      return resp.posts;
     });
   }
 }
@@ -323,6 +350,30 @@ for (const acct of config.nostr) {
     });
   } else {
     skip(`${p}.getEvents.fromBookmarks`, "no event bookmarks to dereference");
+  }
+
+  // Test getArticle using article_addr values from bookmarks
+  const articleAddrs = bookmarks
+    .filter((b): b is Extract<typeof b, { kind: "article" }> => b.kind === "article")
+    .map((b) => b.article_addr)
+    .slice(0, 2);
+  if (articleAddrs.length > 0) {
+    await run(`${p}.getArticle`, async () => {
+      const articles: (NostrArticle | null)[] = [];
+      for (const addr of articleAddrs) {
+        articles.push(await c.getArticle(addr));
+      }
+      const found = articles.filter((a): a is NostrArticle => a !== null);
+      for (const a of found) {
+        if (!a.nostr_uri.startsWith("nostr:note1")) throw new Error(`nostr_uri invalid: ${a.nostr_uri}`);
+        if (!a.author_npub.startsWith("npub1")) throw new Error(`author_npub invalid: ${a.author_npub}`);
+        if (!Array.isArray(a.hashtags)) throw new Error("hashtags must be an array");
+        if (!Array.isArray(a.urls)) throw new Error("urls must be an array");
+      }
+      return `${articles.length} attempted, ${found.length} found`;
+    });
+  } else {
+    skip(`${p}.getArticle`, "no article bookmarks to dereference");
   }
 
   await run(`${p}.myZaps`, () => c.myZaps(5));
