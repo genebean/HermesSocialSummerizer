@@ -16,16 +16,30 @@ const AUTH_SERVICE = "https://bsky.social";
 
 export interface BlueskyPost {
   uri: string;
+  url: string;
   author: string;
   created_at: string;
   text: string;
   likes: number;
+  repost_count: number;
+  reply_count: number;
+  quote_count: number;
+  urls: string[];
+  hashtags: string[];
 }
 
-// Shape of the record field inside a Bluesky post object.
+interface BlueskyFacetFeature {
+  $type: string;
+  uri?: string;
+  tag?: string;
+}
+
 interface BlueskyRecord {
   createdAt?: string;
   text?: string;
+  facets?: Array<{
+    features: BlueskyFacetFeature[];
+  }>;
 }
 
 export class BlueskyReadClient {
@@ -73,10 +87,10 @@ export class BlueskyReadClient {
     return posts.slice(0, limit);
   }
 
-  async likes(limit = 40): Promise<BlueskyPost[]> {
+  async likes(limit = 40, cursor?: string): Promise<BlueskyPost[]> {
     await this.ensureAuth();
     const did = await this.resolveDid();
-    const resp = await this.agent.app.bsky.feed.getActorLikes({ actor: did, limit });
+    const resp = await this.agent.app.bsky.feed.getActorLikes({ actor: did, limit, cursor });
     return resp.data.feed.map((item) => simplifyPost(item.post));
   }
 
@@ -122,13 +136,44 @@ export class BlueskyReadClient {
   }
 }
 
-function simplifyPost(post: { uri: string; author: { handle: string }; record: unknown; likeCount?: number }): BlueskyPost {
+function atUriToWebUrl(uri: string, handle: string): string {
+  // AT URI: at://did:plc:xxx/app.bsky.feed.post/rkey
+  const rkey = uri.split("/").pop() ?? "";
+  return `https://bsky.app/profile/${handle}/post/${rkey}`;
+}
+
+function simplifyPost(post: {
+  uri: string;
+  author: { handle: string };
+  record: unknown;
+  likeCount?: number;
+  repostCount?: number;
+  replyCount?: number;
+  quoteCount?: number;
+}): BlueskyPost {
   const record = post.record as BlueskyRecord;
+  const urls: string[] = [];
+  const hashtags: string[] = [];
+  for (const facet of record.facets ?? []) {
+    for (const feature of facet.features) {
+      if (feature.$type === "app.bsky.richtext.facet#link" && feature.uri) {
+        urls.push(feature.uri);
+      } else if (feature.$type === "app.bsky.richtext.facet#tag" && feature.tag) {
+        hashtags.push(feature.tag);
+      }
+    }
+  }
   return {
     uri: post.uri,
+    url: atUriToWebUrl(post.uri, post.author.handle),
     author: post.author.handle,
     created_at: record.createdAt ?? "",
     text: record.text ?? "",
     likes: post.likeCount ?? 0,
+    repost_count: post.repostCount ?? 0,
+    reply_count: post.replyCount ?? 0,
+    quote_count: post.quoteCount ?? 0,
+    urls: [...new Set(urls)],
+    hashtags: [...new Set(hashtags)],
   };
 }

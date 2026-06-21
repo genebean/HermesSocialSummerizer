@@ -7,9 +7,9 @@
  * when the relevant account is not configured.
  */
 import { loadConfig } from "./config.js";
-import { MastodonReadClient } from "./clients/mastodon.js";
-import { BlueskyReadClient } from "./clients/bluesky.js";
-import { NostrReadClient, npubToHex } from "./clients/nostr.js";
+import { MastodonReadClient, type MastodonPost, type MastodonReblog } from "./clients/mastodon.js";
+import { BlueskyReadClient, type BlueskyPost } from "./clients/bluesky.js";
+import { NostrReadClient, npubToHex, type NostrNote } from "./clients/nostr.js";
 
 const GREEN = "\x1b[32m";
 const RED = "\x1b[31m";
@@ -37,6 +37,90 @@ function skip(name: string, reason: string): void {
   results.push({ name, status: "skip", ms: 0, detail: reason });
 }
 
+// Validate that an item has all expected keys with the right types.
+// Throws with a descriptive message on first mismatch.
+function checkShape<T extends object>(label: string, item: T, checks: Partial<Record<keyof T, string>>): void {
+  for (const [key, expectedType] of Object.entries(checks) as [keyof T, string][]) {
+    const actual = typeof item[key];
+    if (actual !== expectedType) {
+      throw new Error(`${label}.${String(key)}: expected ${expectedType}, got ${actual} (value: ${JSON.stringify(item[key])})`);
+    }
+  }
+}
+
+function checkMastodonPost(p: MastodonPost, label: string): void {
+  checkShape(label, p, {
+    id: "string",
+    author: "string",
+    created_at: "string",
+    text: "string",
+    text_html: "string",
+    favourited: "boolean",
+    boosted: "boolean",
+    favourites_count: "number",
+    reblogs_count: "number",
+    replies_count: "number",
+  });
+  if (!Array.isArray(p.mentions)) throw new Error(`${label}.mentions must be an array`);
+  if (!Array.isArray(p.hashtags)) throw new Error(`${label}.hashtags must be an array`);
+  if (!Array.isArray(p.urls)) throw new Error(`${label}.urls must be an array`);
+  if (p.text_html && p.text === p.text_html) {
+    throw new Error(`${label}.text should be plain text, not identical to text_html`);
+  }
+}
+
+function checkMastodonReblog(r: MastodonReblog, label: string): void {
+  checkShape(label, r, {
+    id: "string",
+    reblogged_at: "string",
+    original_author: "string",
+    original_text: "string",
+    original_text_html: "string",
+    original_favourites_count: "number",
+    original_reblogs_count: "number",
+    original_replies_count: "number",
+  });
+}
+
+function checkBlueskyPost(p: BlueskyPost, label: string): void {
+  checkShape(label, p, {
+    uri: "string",
+    url: "string",
+    author: "string",
+    created_at: "string",
+    text: "string",
+    likes: "number",
+    repost_count: "number",
+    reply_count: "number",
+    quote_count: "number",
+  });
+  if (!Array.isArray(p.urls)) throw new Error(`${label}.urls must be an array`);
+  if (!Array.isArray(p.hashtags)) throw new Error(`${label}.hashtags must be an array`);
+  if (!p.url.startsWith("https://bsky.app/")) {
+    throw new Error(`${label}.url should be a bsky.app web URL, got: ${p.url}`);
+  }
+}
+
+function checkNostrNote(n: NostrNote, label: string): void {
+  checkShape(label, n, {
+    id: "string",
+    nostr_uri: "string",
+    author: "string",
+    author_npub: "string",
+    created_at: "number",
+    text: "string",
+  });
+  if (!n.nostr_uri.startsWith("nostr:note1")) {
+    throw new Error(`${label}.nostr_uri should start with nostr:note1, got: ${n.nostr_uri}`);
+  }
+  if (!n.author_npub.startsWith("npub1")) {
+    throw new Error(`${label}.author_npub should start with npub1, got: ${n.author_npub}`);
+  }
+  if (!Array.isArray(n.hashtags)) throw new Error(`${label}.hashtags must be an array`);
+  if (!Array.isArray(n.urls)) throw new Error(`${label}.urls must be an array`);
+  if (!Array.isArray(n.mentioned_pubkeys)) throw new Error(`${label}.mentioned_pubkeys must be an array`);
+}
+
 // ── Load config ───────────────────────────────────────────────────────────────
 
 console.log(`\n${DIM}Loading config...${RESET}`);
@@ -62,10 +146,59 @@ console.log(
 for (const acct of config.mastodon) {
   const c = new MastodonReadClient(acct.instance_url, acct.access_token);
   const p = `mastodon[${acct.id}]`;
-  await run(`${p}.homeTimeline`, () => c.homeTimeline(5));
-  await run(`${p}.favourites`, () => c.favourites(5));
-  await run(`${p}.bookmarks`, () => c.bookmarks(5));
-  await run(`${p}.reblogs`, () => c.reblogs(5));
+
+  let timelinePosts: MastodonPost[] = [];
+  await run(`${p}.homeTimeline`, async () => {
+    timelinePosts = await c.homeTimeline(5);
+    return timelinePosts;
+  });
+  if (timelinePosts.length > 0) {
+    await run(`${p}.homeTimeline.shape`, async () => {
+      checkMastodonPost(timelinePosts[0], `${p}.homeTimeline[0]`);
+      return `validated ${timelinePosts.length} posts`;
+    });
+  }
+
+  let favourites: MastodonPost[] = [];
+  await run(`${p}.favourites`, async () => {
+    favourites = await c.favourites(5);
+    return favourites;
+  });
+  if (favourites.length > 0) {
+    await run(`${p}.favourites.shape`, async () => {
+      checkMastodonPost(favourites[0], `${p}.favourites[0]`);
+      return `validated ${favourites.length} posts`;
+    });
+    // Test max_id pagination: fetch page 2 starting from the oldest result
+    const oldestId = favourites[favourites.length - 1].id;
+    await run(`${p}.favourites.pagination`, () => c.favourites(5, oldestId));
+  }
+
+  let bookmarks: MastodonPost[] = [];
+  await run(`${p}.bookmarks`, async () => {
+    bookmarks = await c.bookmarks(5);
+    return bookmarks;
+  });
+  if (bookmarks.length > 0) {
+    await run(`${p}.bookmarks.shape`, async () => {
+      checkMastodonPost(bookmarks[0], `${p}.bookmarks[0]`);
+      return `validated ${bookmarks.length} posts`;
+    });
+    const oldestId = bookmarks[bookmarks.length - 1].id;
+    await run(`${p}.bookmarks.pagination`, () => c.bookmarks(5, oldestId));
+  }
+
+  let reblogs: MastodonReblog[] = [];
+  await run(`${p}.reblogs`, async () => {
+    reblogs = await c.reblogs(5);
+    return reblogs;
+  });
+  if (reblogs.length > 0) {
+    await run(`${p}.reblogs.shape`, async () => {
+      checkMastodonReblog(reblogs[0], `${p}.reblogs[0]`);
+      return `validated ${reblogs.length} reblogs`;
+    });
+  }
 }
 
 if (config.mastodon.length === 0) skip("mastodon.*", "no mastodon accounts configured");
@@ -75,9 +208,42 @@ if (config.mastodon.length === 0) skip("mastodon.*", "no mastodon accounts confi
 for (const acct of config.bluesky) {
   const c = new BlueskyReadClient(acct.handle, acct.app_password);
   const p = `bluesky[${acct.id}]`;
-  await run(`${p}.timeline`, () => c.timeline(5));
-  await run(`${p}.likes`, () => c.likes(5));
-  await run(`${p}.reposts`, () => c.reposts(5));
+
+  let timelinePosts: BlueskyPost[] = [];
+  await run(`${p}.timeline`, async () => {
+    timelinePosts = await c.timeline(5);
+    return timelinePosts;
+  });
+  if (timelinePosts.length > 0) {
+    await run(`${p}.timeline.shape`, async () => {
+      checkBlueskyPost(timelinePosts[0], `${p}.timeline[0]`);
+      return `validated ${timelinePosts.length} posts`;
+    });
+  }
+
+  let likes: BlueskyPost[] = [];
+  await run(`${p}.likes`, async () => {
+    likes = await c.likes(5);
+    return likes;
+  });
+  if (likes.length > 0) {
+    await run(`${p}.likes.shape`, async () => {
+      checkBlueskyPost(likes[0], `${p}.likes[0]`);
+      return `validated ${likes.length} posts`;
+    });
+  }
+
+  let reposts: BlueskyPost[] = [];
+  await run(`${p}.reposts`, async () => {
+    reposts = await c.reposts(5);
+    return reposts;
+  });
+  if (reposts.length > 0) {
+    await run(`${p}.reposts.shape`, async () => {
+      checkBlueskyPost(reposts[0], `${p}.reposts[0]`);
+      return `validated ${reposts.length} posts`;
+    });
+  }
 }
 
 if (config.bluesky.length === 0) skip("bluesky.*", "no bluesky accounts configured");
@@ -87,14 +253,74 @@ if (config.bluesky.length === 0) skip("bluesky.*", "no bluesky accounts configur
 const nostrClients: NostrReadClient[] = [];
 
 for (const acct of config.nostr) {
-  const c = new NostrReadClient(npubToHex(acct.npub), acct.relays);
+  const pubkeyHex = npubToHex(acct.npub);
+  const c = new NostrReadClient(pubkeyHex, acct.relays);
   nostrClients.push(c);
   const p = `nostr[${acct.id}]`;
-  await run(`${p}.followingFeed`, () => c.followingFeed(24, 5));
+
+  let feedNotes: NostrNote[] = [];
+  await run(`${p}.followingFeed`, async () => {
+    feedNotes = await c.followingFeed(24, 5);
+    return feedNotes;
+  });
+  if (feedNotes.length > 0) {
+    await run(`${p}.followingFeed.shape`, async () => {
+      checkNostrNote(feedNotes[0], `${p}.followingFeed[0]`);
+      return `validated ${feedNotes.length} notes`;
+    });
+
+    // Test getEvent with a real ID from the feed
+    await run(`${p}.getEvent`, async () => {
+      const result = await c.getEvent(feedNotes[0].id);
+      if (result === null) throw new Error(`getEvent returned null for known-good id ${feedNotes[0].id}`);
+      checkNostrNote(result, `${p}.getEvent result`);
+      return result;
+    });
+
+    // Test getEvents batch with up to 3 IDs from the feed
+    const batchIds = feedNotes.slice(0, 3).map((n) => n.id);
+    await run(`${p}.getEvents`, async () => {
+      const fetched = await c.getEvents(batchIds);
+      if (fetched.length === 0) throw new Error(`getEvents returned 0 results for ${batchIds.length} known-good IDs`);
+      checkNostrNote(fetched[0], `${p}.getEvents[0]`);
+      return fetched;
+    });
+  }
+
   await run(`${p}.myReactions`, () => c.myReactions(5));
   await run(`${p}.myReposts`, () => c.myReposts(5));
-  await run(`${p}.myBookmarks`, () => c.myBookmarks());
+
+  let bookmarks: Awaited<ReturnType<typeof c.myBookmarks>> = [];
+  await run(`${p}.myBookmarks`, async () => {
+    bookmarks = await c.myBookmarks();
+    return bookmarks;
+  });
+
+  // Test getEvents using bookmark event IDs
+  const bookmarkEventIds = bookmarks
+    .filter((b): b is Extract<typeof b, { kind: "event" }> => b.kind === "event")
+    .map((b) => b.event_id)
+    .slice(0, 3);
+  if (bookmarkEventIds.length > 0) {
+    await run(`${p}.getEvents.fromBookmarks`, async () => {
+      const fetched = await c.getEvents(bookmarkEventIds);
+      return fetched;
+    });
+  } else {
+    skip(`${p}.getEvents.fromBookmarks`, "no event bookmarks to dereference");
+  }
+
   await run(`${p}.myZaps`, () => c.myZaps(5));
+
+  // Test getProfile using own pubkey
+  await run(`${p}.getProfile.self`, async () => {
+    const profile = await c.getProfile(pubkeyHex);
+    if (profile !== null) {
+      if (!profile.npub.startsWith("npub1")) throw new Error(`profile.npub invalid: ${profile.npub}`);
+      if (profile.pubkey !== pubkeyHex) throw new Error("profile.pubkey mismatch");
+    }
+    return profile;
+  });
 }
 
 if (config.nostr.length === 0) skip("nostr.*", "no nostr accounts configured");
@@ -109,13 +335,13 @@ let passed = 0, failed = 0, skipped = 0;
 
 for (const r of results) {
   if (r.status === "pass") {
-    console.log(`${GREEN}PASS${RESET}  ${r.name.padEnd(45)} ${DIM}${r.detail}${RESET}`);
+    console.log(`${GREEN}PASS${RESET}  ${r.name.padEnd(50)} ${DIM}${r.detail}${RESET}`);
     passed++;
   } else if (r.status === "fail") {
-    console.log(`${RED}FAIL${RESET}  ${r.name.padEnd(45)} ${RED}${r.detail}${RESET}`);
+    console.log(`${RED}FAIL${RESET}  ${r.name.padEnd(50)} ${RED}${r.detail}${RESET}`);
     failed++;
   } else {
-    console.log(`${YELLOW}SKIP${RESET}  ${r.name.padEnd(45)} ${DIM}${r.detail}${RESET}`);
+    console.log(`${YELLOW}SKIP${RESET}  ${r.name.padEnd(50)} ${DIM}${r.detail}${RESET}`);
     skipped++;
   }
 }

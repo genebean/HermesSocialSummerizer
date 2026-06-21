@@ -60,6 +60,11 @@ function lim(a: Record<string, unknown>, def: number): number {
   return Math.min(Number.isFinite(v) && v > 0 ? Math.floor(v) : def, 200);
 }
 
+function str(a: Record<string, unknown>, key: string): string | undefined {
+  const v = a[key];
+  return typeof v === "string" && v ? v : undefined;
+}
+
 function requireClient<T>(registry: Record<string, T>, accountId: string, platform: string): T {
   if (!(accountId in registry)) throw new Error(`Unknown ${platform} account_id: "${accountId}"`);
   return registry[accountId];
@@ -73,6 +78,11 @@ const server = new Server(
 );
 
 const LIMIT_SCHEMA = { type: "number", minimum: 1, maximum: 200 } as const;
+const ADVANCE_CURSOR_SCHEMA = {
+  type: "boolean",
+  description: "If false, fetch posts without advancing the cursor (safe for debugging or partial analysis). Default: true.",
+  default: true,
+} as const;
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
@@ -83,10 +93,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "mastodon_home_timeline",
-      description: "Fetch recent home-timeline posts for a configured Mastodon account.",
+      description: "Fetch recent home-timeline posts for a configured Mastodon account. Returns plain text with engagement counts, mentions, hashtags, and link previews.",
       inputSchema: {
         type: "object",
-        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
+        properties: {
+          account_id: { type: "string" },
+          limit: { ...LIMIT_SCHEMA, default: 40 },
+          advance_cursor: ADVANCE_CURSOR_SCHEMA,
+        },
         required: ["account_id"],
       },
     },
@@ -95,7 +109,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Mastodon account's own favourites (engagement history).",
       inputSchema: {
         type: "object",
-        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
+        properties: {
+          account_id: { type: "string" },
+          limit: { ...LIMIT_SCHEMA, default: 40 },
+          max_id: { type: "string", description: "Return results older than this post ID (for pagination)." },
+        },
         required: ["account_id"],
       },
     },
@@ -104,7 +122,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Mastodon account's saved bookmarks (strong engagement signal).",
       inputSchema: {
         type: "object",
-        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
+        properties: {
+          account_id: { type: "string" },
+          limit: { ...LIMIT_SCHEMA, default: 40 },
+          max_id: { type: "string", description: "Return results older than this post ID (for pagination)." },
+        },
         required: ["account_id"],
       },
     },
@@ -119,10 +141,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "bluesky_timeline",
-      description: "Fetch recent following-feed posts for a configured Bluesky account.",
+      description: "Fetch recent following-feed posts for a configured Bluesky account. Returns engagement counts, web URLs, and extracted hashtags/links.",
       inputSchema: {
         type: "object",
-        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
+        properties: {
+          account_id: { type: "string" },
+          limit: { ...LIMIT_SCHEMA, default: 40 },
+          advance_cursor: ADVANCE_CURSOR_SCHEMA,
+        },
         required: ["account_id"],
       },
     },
@@ -131,7 +157,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       description: "Fetch this Bluesky account's own likes (engagement history).",
       inputSchema: {
         type: "object",
-        properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 40 } },
+        properties: {
+          account_id: { type: "string" },
+          limit: { ...LIMIT_SCHEMA, default: 40 },
+          cursor: { type: "string", description: "Pagination cursor from a previous call." },
+        },
         required: ["account_id"],
       },
     },
@@ -146,13 +176,14 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "nostr_following_feed",
-      description: "Fetch recent notes from accounts this Nostr npub follows.",
+      description: "Fetch recent notes from accounts this Nostr npub follows. Returns nostr URIs, author npubs, hashtags, URLs, and reply/root thread IDs.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
           hours: { type: "number", default: 24 },
           limit: { ...LIMIT_SCHEMA, default: 100 },
+          advance_cursor: ADVANCE_CURSOR_SCHEMA,
         },
         required: ["account_id"],
       },
@@ -168,7 +199,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     },
     {
       name: "nostr_my_reactions",
-      description: "Fetch this Nostr npub's own published reactions/likes (engagement history).",
+      description: "Fetch this Nostr npub's own published reactions/likes (engagement history). The reply_to_id field identifies the reacted event.",
       inputSchema: {
         type: "object",
         properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 100 } },
@@ -191,6 +222,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         type: "object",
         properties: { account_id: { type: "string" }, limit: { ...LIMIT_SCHEMA, default: 50 } },
         required: ["account_id"],
+      },
+    },
+    {
+      name: "nostr_get_event",
+      description: "Fetch a single Nostr event by ID. Use this to dereference event IDs from bookmarks, reposts, zaps, or reaction targets.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          account_id: { type: "string" },
+          event_id: { type: "string", description: "Hex event ID to fetch." },
+        },
+        required: ["account_id", "event_id"],
+      },
+    },
+    {
+      name: "nostr_get_events",
+      description: "Fetch multiple Nostr events by ID in one relay query. Use this to batch-dereference IDs from bookmarks, reposts, or zap targets.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          account_id: { type: "string" },
+          event_ids: {
+            type: "array",
+            items: { type: "string" },
+            description: "List of hex event IDs to fetch (max 50).",
+          },
+        },
+        required: ["account_id", "event_ids"],
+      },
+    },
+    {
+      name: "nostr_get_profile",
+      description: "Fetch a Nostr profile (kind 0 metadata) by hex pubkey. Returns name, display_name, about, picture, website, and nip05.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          account_id: { type: "string" },
+          pubkey: { type: "string", description: "Hex pubkey of the profile to fetch." },
+        },
+        required: ["account_id", "pubkey"],
       },
     },
     {
@@ -230,18 +301,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "mastodon_home_timeline": {
-        const client = requireClient(clients.mastodon, aid(a), "mastodon");
+        const accountId = aid(a);
+        const client = requireClient(clients.mastodon, accountId, "mastodon");
         const state = loadState();
-        const cursor = getCursor(state, "mastodon", aid(a));
+        const cursor = getCursor(state, "mastodon", accountId);
         const posts = await client.homeTimeline(lim(a, 40), cursor.since_id);
-        if (posts.length > 0) {
+        if (a.advance_cursor !== false && posts.length > 0) {
           let maxId = posts[0].id;
           for (const p of posts) {
             try {
               if (BigInt(p.id) > BigInt(maxId)) maxId = p.id;
             } catch { /* non-integer id, skip */ }
           }
-          setCursor(state, "mastodon", aid(a), { since_id: maxId });
+          setCursor(state, "mastodon", accountId, { since_id: maxId });
           saveState(state);
         }
         result = posts;
@@ -249,11 +321,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "mastodon_bookmarks":
-        result = await requireClient(clients.mastodon, aid(a), "mastodon").bookmarks(lim(a, 40));
+        result = await requireClient(clients.mastodon, aid(a), "mastodon")
+          .bookmarks(lim(a, 40), str(a, "max_id"));
         break;
 
       case "mastodon_favourites":
-        result = await requireClient(clients.mastodon, aid(a), "mastodon").favourites(lim(a, 40));
+        result = await requireClient(clients.mastodon, aid(a), "mastodon")
+          .favourites(lim(a, 40), str(a, "max_id"));
         break;
 
       case "mastodon_reblogs":
@@ -261,13 +335,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "bluesky_timeline": {
-        const client = requireClient(clients.bluesky, aid(a), "bluesky");
+        const accountId = aid(a);
+        const client = requireClient(clients.bluesky, accountId, "bluesky");
         const state = loadState();
-        const cursor = getCursor(state, "bluesky", aid(a));
+        const cursor = getCursor(state, "bluesky", accountId);
         const posts = await client.timeline(lim(a, 40), cursor.since);
-        if (posts.length > 0) {
+        if (a.advance_cursor !== false && posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
-          setCursor(state, "bluesky", aid(a), { since: maxTs });
+          setCursor(state, "bluesky", accountId, { since: maxTs });
           saveState(state);
         }
         result = posts;
@@ -275,7 +350,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "bluesky_likes":
-        result = await requireClient(clients.bluesky, aid(a), "bluesky").likes(lim(a, 40));
+        result = await requireClient(clients.bluesky, aid(a), "bluesky")
+          .likes(lim(a, 40), str(a, "cursor"));
         break;
 
       case "bluesky_reposts":
@@ -283,17 +359,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         break;
 
       case "nostr_following_feed": {
-        const client = requireClient(clients.nostr, aid(a), "nostr");
+        const accountId = aid(a);
+        const client = requireClient(clients.nostr, accountId, "nostr");
         const state = loadState();
-        const cursor = getCursor(state, "nostr", aid(a));
+        const cursor = getCursor(state, "nostr", accountId);
         const posts = await client.followingFeed(
           (a.hours as number) ?? 24,
           lim(a, 100),
           cursor.since_ts
         );
-        if (posts.length > 0) {
+        if (a.advance_cursor !== false && posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
-          setCursor(state, "nostr", aid(a), { since_ts: maxTs });
+          setCursor(state, "nostr", accountId, { since_ts: maxTs });
           saveState(state);
         }
         result = posts;
@@ -315,6 +392,28 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "nostr_my_zaps":
         result = await requireClient(clients.nostr, aid(a), "nostr").myZaps(lim(a, 100));
         break;
+
+      case "nostr_get_event": {
+        const eventId = str(a, "event_id");
+        if (!eventId) throw new Error('Missing required argument: "event_id"');
+        result = await requireClient(clients.nostr, aid(a), "nostr").getEvent(eventId);
+        break;
+      }
+
+      case "nostr_get_events": {
+        const ids = a.event_ids;
+        if (!Array.isArray(ids) || ids.length === 0) throw new Error('Missing or empty required argument: "event_ids"');
+        const validIds = ids.filter((id): id is string => typeof id === "string").slice(0, 50);
+        result = await requireClient(clients.nostr, aid(a), "nostr").getEvents(validIds);
+        break;
+      }
+
+      case "nostr_get_profile": {
+        const pubkey = str(a, "pubkey");
+        if (!pubkey) throw new Error('Missing required argument: "pubkey"');
+        result = await requireClient(clients.nostr, aid(a), "nostr").getProfile(pubkey);
+        break;
+      }
 
       case "reload_config": {
         // Close old Nostr WebSocket connections before replacing clients.

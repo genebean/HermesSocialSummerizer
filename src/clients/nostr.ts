@@ -8,11 +8,12 @@
  * simply isn't present.
  */
 import { SimplePool } from "nostr-tools/pool";
-import { decode as bech32Decode } from "nostr-tools/nip19";
+import { decode as bech32Decode, npubEncode, noteEncode } from "nostr-tools/nip19";
 import type { Filter } from "nostr-tools";
 
 const CONNECT_TIMEOUT = 4_000;
 const CONTACT_TTL_MS = 5 * 60 * 1000;
+const URL_RE = /https?:\/\/[^\s<>"{}|\\^`[\]]+/g;
 
 type NostrEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
 
@@ -24,9 +25,16 @@ export function npubToHex(npub: string): string {
 
 export interface NostrNote {
   id: string;
+  nostr_uri: string;
   author: string;
+  author_npub: string;
   created_at: number;
   text: string;
+  hashtags: string[];
+  urls: string[];
+  mentioned_pubkeys: string[];
+  reply_to_id: string | null;
+  root_id: string | null;
 }
 
 export interface NostrRepost {
@@ -46,6 +54,17 @@ export interface NostrZap {
   recipient_pubkey: string | null;
   amount_sats: number | null;
   message: string;
+}
+
+export interface NostrProfile {
+  pubkey: string;
+  npub: string;
+  name: string | null;
+  display_name: string | null;
+  about: string | null;
+  picture: string | null;
+  website: string | null;
+  nip05: string | null;
 }
 
 export class NostrReadClient {
@@ -167,6 +186,38 @@ export class NostrReadClient {
       reposted_event_id: e.tags.find((t) => t[0] === "e")?.[1] ?? null,
     }));
   }
+
+  async getEvent(eventId: string): Promise<NostrNote | null> {
+    const events = await this.fetchEvents({ ids: [eventId], limit: 1 });
+    return events.length > 0 ? simplifyNote(events[0]) : null;
+  }
+
+  async getEvents(eventIds: string[]): Promise<NostrNote[]> {
+    if (eventIds.length === 0) return [];
+    const events = await this.fetchEvents({ ids: eventIds, limit: eventIds.length });
+    return events.map(simplifyNote);
+  }
+
+  async getProfile(pubkeyHex: string): Promise<NostrProfile | null> {
+    const events = await this.fetchEvents({ kinds: [0], authors: [pubkeyHex], limit: 1 });
+    if (events.length === 0) return null;
+    const e = events[0];
+    let meta: Record<string, unknown> = {};
+    try {
+      meta = JSON.parse(e.content) as Record<string, unknown>;
+    } catch { /* malformed profile metadata, return with empty fields */ }
+    const str = (k: string): string | null => (typeof meta[k] === "string" ? meta[k] as string : null);
+    return {
+      pubkey: e.pubkey,
+      npub: npubEncode(e.pubkey),
+      name: str("name"),
+      display_name: str("display_name"),
+      about: str("about"),
+      picture: str("picture"),
+      website: str("website"),
+      nip05: str("nip05"),
+    };
+  }
 }
 
 function parseContactList(events: { created_at: number; tags: string[][] }[]): string[] {
@@ -175,6 +226,42 @@ function parseContactList(events: { created_at: number; tags: string[][] }[]): s
   return latest.tags.filter((t) => t[0] === "p").map((t) => t[1]);
 }
 
-function simplifyNote(e: { id: string; pubkey: string; created_at: number; content: string }): NostrNote {
-  return { id: e.id, author: e.pubkey, created_at: e.created_at, text: e.content };
+function extractReplyRoot(tags: string[][]): { reply_to_id: string | null; root_id: string | null } {
+  // NIP-10: 'e' tags may carry positional markers "root" / "reply".
+  // If no markers, legacy convention: first 'e' = root, last 'e' = direct parent.
+  const eTags = tags.filter((t) => t[0] === "e");
+  if (eTags.length === 0) return { reply_to_id: null, root_id: null };
+
+  const rootTag = eTags.find((t) => t[3] === "root");
+  const replyTag = eTags.find((t) => t[3] === "reply");
+
+  if (rootTag || replyTag) {
+    return {
+      root_id: rootTag?.[1] ?? null,
+      reply_to_id: replyTag?.[1] ?? null,
+    };
+  }
+
+  // Legacy: no markers
+  return {
+    root_id: eTags[0][1],
+    reply_to_id: eTags.length > 1 ? eTags[eTags.length - 1][1] : null,
+  };
+}
+
+function simplifyNote(e: NostrEvent): NostrNote {
+  const { reply_to_id, root_id } = extractReplyRoot(e.tags);
+  return {
+    id: e.id,
+    nostr_uri: `nostr:${noteEncode(e.id)}`,
+    author: e.pubkey,
+    author_npub: npubEncode(e.pubkey),
+    created_at: e.created_at,
+    text: e.content,
+    hashtags: e.tags.filter((t) => t[0] === "t").map((t) => t[1]),
+    urls: [...new Set(e.content.match(URL_RE) ?? [])],
+    mentioned_pubkeys: e.tags.filter((t) => t[0] === "p").map((t) => t[1]),
+    reply_to_id,
+    root_id,
+  };
 }
