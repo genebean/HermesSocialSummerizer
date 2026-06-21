@@ -15,12 +15,19 @@ const CONNECT_TIMEOUT = 4_000;
 const CONTACT_TTL_MS = 5 * 60 * 1000;
 const URL_RE = /https?:\/\/[^\s<>"{}|\\^`[\]]+/g;
 
-type NostrEvent = { id: string; pubkey: string; created_at: number; content: string; tags: string[][] };
+type NostrEvent = { id: string; pubkey: string; kind: number; created_at: number; content: string; tags: string[][] };
 
 export function npubToHex(npub: string): string {
   const decoded = bech32Decode(npub);
   if (decoded.type !== "npub") throw new Error(`Expected npub, got ${decoded.type}`);
   return decoded.data as string;
+}
+
+export interface NostrEngagement {
+  reactions: number;
+  reposts: number;
+  zaps: number;
+  zap_total_sats: number;
 }
 
 export interface NostrNote {
@@ -35,6 +42,7 @@ export interface NostrNote {
   mentioned_pubkeys: string[];
   reply_to_id: string | null;
   root_id: string | null;
+  engagement?: NostrEngagement;
 }
 
 export interface NostrRepost {
@@ -112,16 +120,62 @@ export class NostrReadClient {
     return pubkeys;
   }
 
-  async followingFeed(hours = 24, limit = 100, sinceTs?: number): Promise<NostrNote[]> {
+  async followingFeed(hours = 24, limit = 100, sinceTs?: number, includeEngagement = false): Promise<NostrNote[]> {
     const followed = await this.getFollowed();
     if (followed.length === 0) return [];
 
     const since = sinceTs ?? Math.floor(Date.now() / 1000) - hours * 3600;
-    const notes = await this.fetchEvents({ kinds: [1], authors: followed, since, limit });
+    const events = await this.fetchEvents({ kinds: [1], authors: followed, since, limit });
+    const notes = events.sort((a, b) => b.created_at - a.created_at).map(simplifyNote);
 
-    return notes
-      .sort((a, b) => b.created_at - a.created_at)
-      .map(simplifyNote);
+    if (includeEngagement && notes.length > 0) {
+      const engMap = await this.fetchEngagement(notes.map((n) => n.id));
+      for (const note of notes) {
+        const eng = engMap.get(note.id);
+        if (eng) note.engagement = eng;
+      }
+    }
+
+    return notes;
+  }
+
+  // Fetches reaction (kind 7), repost (kind 6), and zap receipt (kind 9735) counts
+  // for the given event IDs in a single relay query. Counts are approximate —
+  // relays may not have all events and the result limit is 1000 per batch.
+  private async fetchEngagement(eventIds: string[]): Promise<Map<string, NostrEngagement>> {
+    const events = await this.fetchEvents({
+      kinds: [6, 7, 9735],
+      "#e": eventIds,
+      limit: 1000,
+    } as Filter);
+
+    const map = new Map<string, NostrEngagement>();
+    const init = (): NostrEngagement => ({ reactions: 0, reposts: 0, zaps: 0, zap_total_sats: 0 });
+
+    for (const e of events) {
+      const targetId = e.tags.find((t) => t[0] === "e")?.[1];
+      if (!targetId || !eventIds.includes(targetId)) continue;
+      if (!map.has(targetId)) map.set(targetId, init());
+      const eng = map.get(targetId)!;
+
+      if (e.kind === 7) {
+        eng.reactions++;
+      } else if (e.kind === 6) {
+        eng.reposts++;
+      } else if (e.kind === 9735) {
+        eng.zaps++;
+        const desc = e.tags.find((t) => t[0] === "description")?.[1];
+        if (desc && desc.length <= 4096) {
+          try {
+            const req = JSON.parse(desc);
+            const amountTag = (req.tags as string[][])?.find((t) => t[0] === "amount");
+            if (amountTag) eng.zap_total_sats += Math.round(Number(amountTag[1]) / 1000);
+          } catch { /* skip malformed zap request */ }
+        }
+      }
+    }
+
+    return map;
   }
 
   async myReactions(limit = 100): Promise<NostrNote[]> {

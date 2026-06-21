@@ -269,6 +269,21 @@ for (const acct of config.nostr) {
       return `validated ${feedNotes.length} notes`;
     });
 
+    await run(`${p}.followingFeed.includeEngagement`, async () => {
+      const notesWithEng = await c.followingFeed(24, 5, undefined, true);
+      for (const n of notesWithEng) {
+        if (n.engagement !== undefined) {
+          const eng = n.engagement;
+          if (typeof eng.reactions !== "number") throw new Error("engagement.reactions must be number");
+          if (typeof eng.reposts !== "number") throw new Error("engagement.reposts must be number");
+          if (typeof eng.zaps !== "number") throw new Error("engagement.zaps must be number");
+          if (typeof eng.zap_total_sats !== "number") throw new Error("engagement.zap_total_sats must be number");
+        }
+      }
+      const withEngCount = notesWithEng.filter((n) => n.engagement !== undefined).length;
+      return `${notesWithEng.length} notes, ${withEngCount} with engagement data`;
+    });
+
     // Test getEvent with a real ID from the feed
     await run(`${p}.getEvent`, async () => {
       const result = await c.getEvent(feedNotes[0].id);

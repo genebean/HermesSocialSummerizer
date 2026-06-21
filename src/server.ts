@@ -184,6 +184,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           hours: { type: "number", default: 24 },
           limit: { ...LIMIT_SCHEMA, default: 100 },
           advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          include_engagement: {
+            type: "boolean",
+            description: "If true, fetch reaction, repost, and zap counts for each note via an extra relay query. Counts are approximate. Default: false.",
+            default: false,
+          },
         },
         required: ["account_id"],
       },
@@ -366,7 +371,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const posts = await client.followingFeed(
           (a.hours as number) ?? 24,
           lim(a, 100),
-          cursor.since_ts
+          cursor.since_ts,
+          a.include_engagement === true
         );
         if (a.advance_cursor !== false && posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
