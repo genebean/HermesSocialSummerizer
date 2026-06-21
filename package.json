@@ -1,6 +1,7 @@
 {
   "name": "hermessocialsummerizer",
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "engines": { "node": ">=24" },
   "description": "A read-only MCP server for Mastodon, Bluesky, and Nostr, supporting multiple accounts per platform. Built so that an agent (Hermes, Claude, or anything else speaking MCP) has tools to *fetch and summarize* feeds and never a tool to post, like, follow, or otherwise write anywhere.",
   "main": "dist/server.js",
   "scripts": {

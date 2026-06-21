@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  pull_request:
+
+jobs:
+  pre-commit:
+    name: pre-commit hooks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.x"
+      - name: Install npm dependencies
+        run: nix develop --command npm ci
+      - uses: pre-commit/action@v3.0.1
+
+  typecheck:
+    name: TypeScript type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Install npm dependencies
+        run: nix develop --command npm ci
+      - name: Type check
+        run: nix develop --command npm run typecheck
+
+  nix-build:
+    name: nix build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - uses: DeterminateSystems/flake-checker-action@v12
+        with:
+          # Fail the PR if nixpkgs is more than 30 days stale.
+          # The update-flake-lock workflow keeps it fresh on a weekly cadence.
+          fail-mode: true
+      - name: Ensure npmDepsHash is not the placeholder value
+        run: |
+          if grep -qF 'sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=' pkgs/social-reader.nix; then
+            echo "::error file=pkgs/social-reader.nix::npmDepsHash is still the placeholder. Run 'nix run nixpkgs#prefetch-npm-deps package-lock.json', copy the hash into pkgs/social-reader.nix, and commit."
+            exit 1
+          fi
+      - name: nix build
+        run: nix build
+      - name: NixOS module evaluation (nix build nixosConfigurations.test)
+        # Builds a minimal NixOS closure with the social-reader module enabled to catch
+        # evaluation errors (missing options, type mismatches) without deploying.
+        run: nix build .#nixosConfigurations.test.config.system.build.toplevel
+
+  npm-audit:
+    name: npm audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Audit for critical vulnerabilities
+        run: npm audit --audit-level=critical
+
+  dependency-review:
+    name: dependency review
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/dependency-review-action@v5.0.0

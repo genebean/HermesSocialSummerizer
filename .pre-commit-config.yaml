@@ -1,0 +1,42 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=500]
+      - id: check-json
+      - id: check-yaml
+
+  - repo: local
+    hooks:
+      - id: nixfmt
+        name: nixfmt
+        entry: nix
+        language: system
+        types: [nix]
+        pass_filenames: false
+        args: ["fmt"]
+
+      - id: deadnix
+        name: deadnix
+        entry: nix run nixpkgs#deadnix --
+        language: system
+        types: [nix]
+        pass_filenames: true
+
+      - id: npmDepsHash-not-placeholder
+        name: npmDepsHash must not be placeholder
+        language: pygrep
+        entry: "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        files: pkgs/social-reader\.nix
+        pass_filenames: false
+
+      - id: typecheck
+        name: TypeScript type check
+        entry: nix develop --command npm run typecheck
+        language: system
+        pass_filenames: false
+        files: \.ts$
