@@ -76,6 +76,11 @@ function mxl(a: Record<string, unknown>): number | undefined {
   return Number.isFinite(v) && v > 0 ? Math.floor(v) : undefined;
 }
 
+function mp(a: Record<string, unknown>): number {
+  const v = Number(a.max_pages);
+  return Number.isFinite(v) && v >= 1 ? Math.min(Math.floor(v), 10) : 1;
+}
+
 // ── MCP server setup ─────────────────────────────────────────────────────────
 
 const server = new Server(
@@ -84,6 +89,13 @@ const server = new Server(
 );
 
 const LIMIT_SCHEMA = { type: "number", minimum: 1, maximum: 200 } as const;
+const MAX_PAGES_SCHEMA = {
+  type: "number",
+  minimum: 1,
+  maximum: 10,
+  default: 1,
+  description: "Internally fetch up to this many pages and concatenate the results. Use 2–5 for catch-up scans when many posts may have accumulated since the last cursor. Default: 1 (single-page, current behaviour).",
+} as const;
 const ADVANCE_CURSOR_SCHEMA = {
   type: "boolean",
   description: "If false, fetch posts without advancing the cursor (safe for debugging or partial analysis). Default: true.",
@@ -116,6 +128,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          max_pages: MAX_PAGES_SCHEMA,
           include_html: INCLUDE_HTML_SCHEMA,
           max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
@@ -176,6 +189,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
           advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          max_pages: MAX_PAGES_SCHEMA,
           max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
@@ -219,6 +233,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
           hours: { type: "number", default: 24 },
           limit: { ...LIMIT_SCHEMA, default: 100 },
           advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          max_pages: MAX_PAGES_SCHEMA,
           include_engagement: {
             type: "boolean",
             description: "If true, fetch reaction, repost, and zap counts for each note via an extra relay query. Counts are approximate. Default: false.",
@@ -377,7 +392,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const client = requireClient(clients.mastodon, accountId, "mastodon");
         const state = loadState();
         const cursor = getCursor(state, "mastodon", accountId);
-        const posts = await client.homeTimeline(lim(a, 40), cursor.since_id);
+        const posts = await client.homeTimeline(lim(a, 40), cursor.since_id, mp(a));
         if (a.advance_cursor !== false && posts.length > 0) {
           let maxId = posts[0].id;
           for (const p of posts) {
@@ -429,7 +444,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const client = requireClient(clients.bluesky, accountId, "bluesky");
         const state = loadState();
         const cursor = getCursor(state, "bluesky", accountId);
-        const posts = await client.timeline(lim(a, 40), cursor.since);
+        const posts = await client.timeline(lim(a, 40), cursor.since, mp(a));
         if (a.advance_cursor !== false && posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
           setCursor(state, "bluesky", accountId, { since: maxTs });
@@ -465,7 +480,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           (a.hours as number) ?? 24,
           lim(a, 100),
           cursor.since_ts,
-          a.include_engagement === true
+          a.include_engagement === true,
+          mp(a)
         );
         if (a.advance_cursor !== false && posts.length > 0) {
           const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);

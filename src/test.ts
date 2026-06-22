@@ -160,6 +160,12 @@ for (const acct of config.mastodon) {
     });
   }
 
+  await run(`${p}.homeTimeline.maxPages`, async () => {
+    const multiPage = await c.homeTimeline(5, undefined, 2);
+    if (multiPage.length > 0) checkMastodonPost(multiPage[0], `${p}.homeTimeline.maxPages[0]`);
+    return `${multiPage.length} posts across up to 2 pages`;
+  });
+
   let favourites: MastodonPost[] = [];
   await run(`${p}.favourites`, async () => {
     favourites = await c.favourites(5);
@@ -231,6 +237,12 @@ for (const acct of config.bluesky) {
     });
   }
 
+  await run(`${p}.timeline.maxPages`, async () => {
+    const multiPage = await c.timeline(5, undefined, 2);
+    if (multiPage.length > 0) checkBlueskyPost(multiPage[0], `${p}.timeline.maxPages[0]`);
+    return `${multiPage.length} posts across up to 2 pages`;
+  });
+
   let likes: BlueskyPost[] = [];
   let likesCursor: string | undefined;
   await run(`${p}.likes`, async () => {
@@ -295,6 +307,12 @@ for (const acct of config.nostr) {
     await run(`${p}.followingFeed.shape`, async () => {
       checkNostrNote(feedNotes[0], `${p}.followingFeed[0]`);
       return `validated ${feedNotes.length} notes`;
+    });
+
+    await run(`${p}.followingFeed.maxPages`, async () => {
+      const multiPage = await c.followingFeed(48, 5, undefined, false, 2);
+      if (multiPage.length > 0) checkNostrNote(multiPage[0], `${p}.followingFeed.maxPages[0]`);
+      return `${multiPage.length} notes across up to 2 pages`;
     });
 
     await run(`${p}.followingFeed.includeEngagement`, async () => {

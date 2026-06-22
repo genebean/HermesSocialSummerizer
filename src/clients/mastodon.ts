@@ -86,11 +86,22 @@ export class MastodonReadClient {
     return this.meId;
   }
 
-  async homeTimeline(limit = 40, sinceId?: string): Promise<MastodonPost[]> {
-    const params: Record<string, string | number> = { limit };
-    if (sinceId) params.since_id = sinceId;
-    const statuses = await withRetry(() => this.get<RawStatus[]>("/api/v1/timelines/home", params));
-    return statuses.map(simplifyStatus);
+  async homeTimeline(limit = 40, sinceId?: string, maxPages = 1): Promise<MastodonPost[]> {
+    const all: MastodonPost[] = [];
+    let maxId: string | undefined;
+
+    for (let page = 0; page < maxPages; page++) {
+      const params: Record<string, string | number> = { limit };
+      if (sinceId) params.since_id = sinceId;
+      if (maxId) params.max_id = maxId;
+      const statuses = await withRetry(() => this.get<RawStatus[]>("/api/v1/timelines/home", params));
+      const posts = statuses.map(simplifyStatus);
+      all.push(...posts);
+      if (posts.length < limit) break;
+      maxId = posts[posts.length - 1].id;
+    }
+
+    return all;
   }
 
   async favourites(limit = 40, maxId?: string): Promise<MastodonPost[]> {

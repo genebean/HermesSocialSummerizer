@@ -134,13 +134,32 @@ export class NostrReadClient {
     return pubkeys;
   }
 
-  async followingFeed(hours = 24, limit = 100, sinceTs?: number, includeEngagement = false): Promise<NostrNote[]> {
+  async followingFeed(hours = 24, limit = 100, sinceTs?: number, includeEngagement = false, maxPages = 1): Promise<NostrNote[]> {
     const followed = await this.getFollowed();
     if (followed.length === 0) return [];
 
     const since = sinceTs ?? Math.floor(Date.now() / 1000) - hours * 3600;
-    const events = await this.fetchEvents({ kinds: [1], authors: followed, since, limit });
-    const notes = events.sort((a, b) => b.created_at - a.created_at).map(simplifyNote);
+    const seenIds = new Set<string>();
+    const allEvents: NostrEvent[] = [];
+    let until: number | undefined;
+
+    for (let page = 0; page < maxPages; page++) {
+      const filter: Filter = { kinds: [1], authors: followed, since, limit };
+      if (until !== undefined) filter.until = until;
+      const events = await this.fetchEvents(filter);
+      let newCount = 0;
+      for (const e of events) {
+        if (!seenIds.has(e.id)) {
+          seenIds.add(e.id);
+          allEvents.push(e);
+          newCount++;
+        }
+      }
+      if (newCount < limit) break;
+      until = Math.min(...events.map((e) => e.created_at)) - 1;
+    }
+
+    const notes = allEvents.sort((a, b) => b.created_at - a.created_at).map(simplifyNote);
 
     if (includeEngagement && notes.length > 0) {
       const engMap = await this.fetchEngagement(notes.map((n) => n.id));

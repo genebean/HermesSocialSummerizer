@@ -71,20 +71,29 @@ export class BlueskyReadClient {
     return this.loginPromise;
   }
 
-  async timeline(limit = 40, since?: string): Promise<BlueskyPost[]> {
-    const fetchLimit = since ? Math.min(limit * 2, 100) : limit;
-    let posts: BlueskyPost[];
+  async timeline(limit = 40, since?: string, maxPages = 1): Promise<BlueskyPost[]> {
+    const all: BlueskyPost[] = [];
 
     if (this.authenticated) {
       await this.ensureAuth();
-      const resp = await this.agent.getTimeline({ limit: fetchLimit });
-      posts = resp.data.feed.map((item) => simplifyPost(item.post));
+      let atCursor: string | undefined;
+      for (let page = 0; page < maxPages; page++) {
+        const resp = await this.agent.getTimeline({ limit, cursor: atCursor });
+        const pagePosts = resp.data.feed.map((item) => simplifyPost(item.post));
+        all.push(...pagePosts);
+        atCursor = resp.data.cursor;
+        if (!atCursor || pagePosts.length === 0) break;
+        // Stop early once the oldest post on this page predates our cursor.
+        if (since && pagePosts[pagePosts.length - 1].created_at <= since) break;
+      }
     } else {
-      posts = await this.publicFollowingFeed(fetchLimit);
+      // Public mode has no AT Protocol cursor; single fetch only.
+      const fetchLimit = since ? Math.min(limit * 2, 100) : limit;
+      all.push(...await this.publicFollowingFeed(fetchLimit));
     }
 
-    if (since) posts = posts.filter((p) => p.created_at > since);
-    return posts.slice(0, limit);
+    const posts = since ? all.filter((p) => p.created_at > since) : all;
+    return posts;
   }
 
   async likes(limit = 40, cursor?: string): Promise<{ posts: BlueskyPost[]; cursor?: string }> {
