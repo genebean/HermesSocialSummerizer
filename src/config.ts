@@ -7,7 +7,9 @@ import { z } from "zod";
 
 export const HERE = join(dirname(fileURLToPath(import.meta.url)), "..");
 
-loadDotenv({ path: join(HERE, ".env") });
+// quiet: true suppresses the dotenv v17 stdout banner ("◇ injected env …") which
+// breaks MCP stdio framing — stdout must carry only JSON-RPC.
+loadDotenv({ path: join(HERE, ".env"), quiet: true });
 
 function envVar(name: string, required: boolean): string {
   const val = process.env[name];
