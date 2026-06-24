@@ -17,7 +17,7 @@ To interact with a wallet you need a NWC connection string (Connection Secret) w
 
 The user's lightning address MAY exist on the connection secret, if the `lud16` parameter exists.
 
-Example NWC connection secret: `nostr+walletconnect://b889ff5b1513b641e2a139f661a661364979c5beee91842f8f0ef42ab558e9d4?relay=wss%3A%2F%2Frelay.damus.io&secret=71a8c14c1407c113601079c4302dab36460f0ccd0ad506f1f2dc73b5100e4f3c&lud16=example@getalby.com`
+Example NWC connection secret shape: `nostr+walletconnect://<wallet-service-pubkey>?relay=wss%3A%2F%2Frelay.example.com&secret=<replace-with-generated-secret>&lud16=example@example.com`
 
 For backend / console apps that use a single wallet to power them, an .env file can be a good place to put the connection secret e.g. in a `NWC_URL` environment variable.
 

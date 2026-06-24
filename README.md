@@ -5,6 +5,13 @@ accounts per platform. Built so that an agent (Hermes, Claude, or anything
 else speaking MCP) has tools to *fetch and summarize* feeds and never a tool
 to post, like, follow, or otherwise write anywhere.
 
+For end-user setup, operation, cursor-safe usage, and troubleshooting, open the
+HTML guide at:
+
+```text
+docs/index.html
+```
+
 ## Why this is actually read-only, not just policy-read-only
 
 | Platform | Guarantee | Why |
@@ -70,6 +77,73 @@ In practice it is launched by the MCP host (Claude Code, Hermes, etc.) via
 `.mcp.json`, which already points to the local `tsx` binary — no global
 install needed.
 
+### Running with Nix
+
+This repo includes a flake with a Node 24 dev shell, production package,
+container image, and NixOS module.
+
+```bash
+nix develop
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+Build the production package:
+
+```bash
+nix build
+```
+
+The result contains a stdio MCP binary:
+
+```bash
+./result/bin/social-reader
+```
+
+Set `SOCIAL_READER_CONFIG`, `CURSOR_STATE_PATH`, and the credential env vars
+required by your config before launching it from an MCP host.
+
+The flake also exports `nixosModules.default`. The module writes a generated
+non-secret config with `${ENV_VAR}` placeholders, creates a writable cursor
+state directory, and installs a `social-reader` wrapper on `PATH`. Secret token
+values still come from the environment of the MCP host that launches the
+wrapper.
+
+### Running as a container
+
+Build the Docker/OCI-compatible image:
+
+```bash
+nix build .#container
+docker load < result
+```
+
+The image is named `social-reader:latest`. It is still a stdio MCP server, not
+an HTTP service, so run it interactively from your MCP host:
+
+```json
+{
+  "mcpServers": {
+    "social-reader": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--env-file", "/path/to/.env",
+        "-e", "SOCIAL_READER_CONFIG=/config/config.yaml",
+        "-e", "CURSOR_STATE_PATH=/data/cursor_state.json",
+        "-v", "/path/to/config.yaml:/config/config.yaml:ro",
+        "-v", "/path/to/social-reader-data:/data",
+        "social-reader:latest"
+      ]
+    }
+  }
+}
+```
+
+Do not publish ports for the container; the MCP host talks to stdin/stdout.
+
 ## Tools
 
 Call `list_accounts` first to get the account IDs used by all other tools.
@@ -102,6 +176,16 @@ Call `list_accounts` first to get the account IDs used by all other tools.
 | Tool | Description |
 |---|---|
 | `reload_config` | Reloads `config.yaml` and reinitializes all clients without restarting the server. Also hot-reloads any client code changes. |
+| `mark_seen` | Advances a platform/account timeline cursor after external processing of posts fetched with `advance_cursor: false`. |
+
+### Nostr enrichment
+
+| Tool | Description |
+|---|---|
+| `nostr_get_event` | Fetch one Nostr event by hex event ID. |
+| `nostr_get_events` | Fetch up to 50 Nostr events by hex event ID in one relay query. |
+| `nostr_get_profile` | Fetch a Nostr kind-0 profile by hex pubkey. |
+| `nostr_get_article` | Fetch a NIP-23 long-form article by `30023:<pubkey>:<d-tag>` address. |
 
 ### Parameters
 

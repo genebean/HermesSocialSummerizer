@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "social-reader": {
-      "command": "/home/gene/repos/HermesSocialSummerizer/node_modules/.bin/tsx",
-      "args": ["/home/gene/repos/HermesSocialSummerizer/src/server.ts"]
+      "command": "/path/to/HermesSocialSummerizer/node_modules/.bin/tsx",
+      "args": ["/path/to/HermesSocialSummerizer/src/server.ts"]
     }
   }
 }

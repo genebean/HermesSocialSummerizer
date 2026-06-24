@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HermesSocialSummerizer MCP User Guide</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #0f172a;
+      --panel: #111827;
+      --panel-2: #1f2937;
+      --text: #e5e7eb;
+      --muted: #a7b0c0;
+      --accent: #67e8f9;
+      --accent-2: #a78bfa;
+      --border: #334155;
+      --code: #020617;
+      --warn: #fbbf24;
+      --ok: #34d399;
+      --bad: #fb7185;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.6;
+      background: var(--bg);
+      color: var(--text);
+    }
+    a { color: var(--accent); }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; }
+    code { color: #bae6fd; }
+    pre {
+      overflow-x: auto;
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 0.75rem;
+      background: var(--code);
+    }
+    header {
+      padding: 4rem 1.25rem 3rem;
+      background:
+        radial-gradient(circle at 18% 20%, rgba(103, 232, 249, 0.16), transparent 30rem),
+        radial-gradient(circle at 82% 0%, rgba(167, 139, 250, 0.18), transparent 28rem),
+        #020617;
+      border-bottom: 1px solid var(--border);
+    }
+    .wrap { max-width: 1120px; margin: 0 auto; }
+    .eyebrow { color: var(--accent); font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+    h1 { font-size: clamp(2.2rem, 6vw, 4.4rem); line-height: 1; margin: 0.5rem 0 1rem; }
+    h2 { margin-top: 3rem; font-size: 2rem; }
+    h3 { margin-top: 2rem; color: #f8fafc; }
+    .lead { font-size: 1.25rem; color: var(--muted); max-width: 860px; }
+    main { padding: 2rem 1.25rem 5rem; }
+    nav.toc {
+      margin: 2rem 0;
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      background: rgba(17, 24, 39, 0.75);
+    }
+    nav.toc ul { columns: 2; padding-left: 1.25rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+    .card, .callout {
+      padding: 1rem;
+      border: 1px solid var(--border);
+      border-radius: 1rem;
+      background: var(--panel);
+    }
+    .card h3 { margin-top: 0; }
+    .callout { border-left: 4px solid var(--accent); }
+    .callout.warning { border-left-color: var(--warn); }
+    .callout.ok { border-left-color: var(--ok); }
+    .callout.danger { border-left-color: var(--bad); }
+    table { width: 100%; border-collapse: collapse; margin: 1rem 0; background: var(--panel); border-radius: 0.75rem; overflow: hidden; }
+    th, td { border: 1px solid var(--border); padding: 0.75rem; vertical-align: top; }
+    th { background: var(--panel-2); text-align: left; }
+    .muted { color: var(--muted); }
+    .badge { display: inline-block; padding: 0.1rem 0.45rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 0.85rem; }
+    @media (max-width: 720px) {
+      nav.toc ul { columns: 1; }
+      header { padding-top: 2.5rem; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="eyebrow">End-user guide</div>
+      <h1>HermesSocialSummerizer MCP</h1>
+      <p class="lead">A read-only MCP server that lets Hermes, Claude Code, or any MCP-capable agent fetch and summarize Mastodon, Bluesky, and Nostr feeds without exposing any social posting surface.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <nav class="toc" aria-label="Table of contents">
+      <strong>Contents</strong>
+      <ul>
+        <li><a href="#what-it-does">What it does</a></li>
+        <li><a href="#read-only">Read-only guarantees</a></li>
+        <li><a href="#setup">Setup</a></li>
+        <li><a href="#nix">Run with Nix</a></li>
+        <li><a href="#container">Run as a container</a></li>
+        <li><a href="#config">Configuration</a></li>
+        <li><a href="#run">Run the MCP server</a></li>
+        <li><a href="#connect">Connect an MCP host</a></li>
+        <li><a href="#tools">Tool reference</a></li>
+        <li><a href="#cursors">Cursor-safe usage</a></li>
+        <li><a href="#daily-digest">Daily digest usage</a></li>
+        <li><a href="#operations">Operations</a></li>
+        <li><a href="#troubleshooting">Troubleshooting</a></li>
+      </ul>
+    </nav>
+
+    <section id="what-it-does">
+      <h2>What it does</h2>
+      <div class="grid">
+        <div class="card">
+          <h3>Reads social feeds</h3>
+          <p>Fetch timelines and following feeds from Mastodon, Bluesky, and Nostr accounts configured in <code>config.yaml</code>.</p>
+        </div>
+        <div class="card">
+          <h3>Reads engagement history</h3>
+          <p>Expose favourites, likes, boosts/reposts, bookmarks, reactions, and zaps so an agent can infer what is likely interesting.</p>
+        </div>
+        <div class="card">
+          <h3>Never posts</h3>
+          <p>The MCP tool list contains no post, favourite, like, boost, follow, repost, or publish operation.</p>
+        </div>
+      </div>
+      <p>The server speaks MCP over stdio. In normal use, your MCP host launches it from <code>.mcp.json</code> or equivalent Hermes configuration.</p>
+    </section>
+
+    <section id="read-only">
+      <h2>Read-only guarantees</h2>
+      <table>
+        <thead><tr><th>Platform</th><th>Guarantee</th><th>What that means</th></tr></thead>
+        <tbody>
+          <tr><td>Mastodon</td><td><strong>Credential-enforced</strong></td><td>Use an OAuth token created with the <code>read</code> scope only. The Mastodon instance rejects writes from that token.</td></tr>
+          <tr><td>Bluesky</td><td><strong>Code-enforced or public-only</strong></td><td>With an app password, this server only calls read API methods. Without an app password, it uses public AppView reads with no credential.</td></tr>
+          <tr><td>Nostr</td><td><strong>Structural</strong></td><td>Only an <code>npub</code> public key is configured. Never put an <code>nsec</code> private key in this project.</td></tr>
+        </tbody>
+      </table>
+      <div class="callout danger">
+        <strong>Do not add write capabilities.</strong> This project is intentionally read-only. Do not add tools for posting, liking, favouriting, following, boosting, reposting, or publishing Nostr events.
+      </div>
+    </section>
+
+    <section id="setup">
+      <h2>Setup</h2>
+      <p>For local development without Nix, install dependencies and create a local config file:</p>
+      <pre><code>cd /path/to/HermesSocialSummerizer
+npm install
+cp config.example.yaml config.yaml</code></pre>
+      <p>Create a <code>.env</code> file for secrets referenced by <code>config.yaml</code>:</p>
+      <pre><code>MASTODON_MAIN_TOKEN=your_read_only_access_token
+BSKY_PERSONAL_APP_PW=your_bluesky_app_password</code></pre>
+      <p>The server loads <code>.env</code> automatically at startup. Keep both <code>config.yaml</code> and <code>.env</code> out of git.</p>
+      <h3>Verify setup</h3>
+      <pre><code>npm run typecheck
+npm test
+npm run build</code></pre>
+    </section>
+
+    <section id="nix">
+      <h2>Run with Nix</h2>
+      <p>The repo includes a flake that provides a dev shell, a production package, a container image, and a NixOS module.</p>
+
+      <h3>Development shell</h3>
+      <p>Use the dev shell when working in the repository. It provides Node 24, npm, and Nix formatting/linting tools.</p>
+      <pre><code>cd /path/to/HermesSocialSummerizer
+nix develop
+npm install
+npm run typecheck
+npm test
+npm run build</code></pre>
+
+      <h3>Production package</h3>
+      <p>Build the production package with:</p>
+      <pre><code>nix build</code></pre>
+      <p>The resulting binary is:</p>
+      <pre><code>./result/bin/social-reader</code></pre>
+      <p>Run it by supplying a config path, cursor-state path, and required secret environment variables:</p>
+      <pre><code>export SOCIAL_READER_CONFIG=/path/to/config.yaml
+export CURSOR_STATE_PATH=/path/to/cursor_state.json
+export MASTODON_MAIN_TOKEN=...
+export BSKY_PERSONAL_APP_PW=...
+./result/bin/social-reader</code></pre>
+      <p>The binary still speaks MCP over stdio; point your MCP host at <code>social-reader</code> or <code>/nix/store/.../bin/social-reader</code>.</p>
+
+      <h3>NixOS module</h3>
+      <p>The flake exports:</p>
+      <pre><code>nixosModules.default</code></pre>
+      <p>The module writes a generated config containing only non-secret account metadata and <code>${ENV_VAR}</code> placeholders. Actual secret values must come from the MCP host environment or systemd environment files.</p>
+      <pre><code>{ inputs, ... }:
+{
+  imports = [ inputs.social-reader.nixosModules.default ];
+
+  services.social-reader = {
+    enable = true;
+    user = "gene";
+    dataDir = "/var/lib/social-reader";
+
+    mastodon = [{
+      id = "main";
+      instanceUrl = "https://mastodon.social";
+      accessTokenEnv = "MASTODON_MAIN_TOKEN";
+    }];
+
+    bluesky = [{
+      id = "personal";
+      handle = "example.bsky.social";
+      appPasswordEnv = "BSKY_PERSONAL_APP_PW";
+    }];
+
+    nostr = [{
+      id = "main";
+      npub = "npub1...";
+      relays = [ "wss://relay.damus.io" "wss://nos.lol" ];
+    }];
+  };
+}</code></pre>
+      <p>The module installs a <code>social-reader</code> wrapper on <code>PATH</code>. The MCP host can use <code>command: social-reader</code>, provided it also receives the secret env vars named in the generated config.</p>
+    </section>
+
+    <section id="container">
+      <h2>Run as a container</h2>
+      <p>The flake can build an OCI/Docker-compatible image with the production <code>social-reader</code> binary.</p>
+      <pre><code>nix build .#container
+docker load &lt; result</code></pre>
+      <p>The image is named <code>social-reader:latest</code>. It still speaks MCP over stdio, so run it interactively with stdin/stdout connected to the MCP host.</p>
+
+      <h3>Required runtime mounts and environment</h3>
+      <table>
+        <thead><tr><th>Path/env</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>/config/config.yaml</code></td><td>Read-only config file. Set <code>SOCIAL_READER_CONFIG=/config/config.yaml</code>.</td></tr>
+          <tr><td><code>/data/</code></td><td>Writable cursor-state volume. Set <code>CURSOR_STATE_PATH=/data/cursor_state.json</code>.</td></tr>
+          <tr><td>Secret env vars</td><td>Mastodon tokens and optional Bluesky app passwords, usually from <code>--env-file</code>.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Example MCP host command</h3>
+      <pre><code>{
+  "mcpServers": {
+    "social-reader": {
+      "command": "docker",
+      "args": [
+        "run", "--rm", "-i",
+        "--env-file", "/path/to/.env",
+        "-e", "SOCIAL_READER_CONFIG=/config/config.yaml",
+        "-e", "CURSOR_STATE_PATH=/data/cursor_state.json",
+        "-v", "/path/to/config.yaml:/config/config.yaml:ro",
+        "-v", "/path/to/social-reader-data:/data",
+        "social-reader:latest"
+      ]
+    }
+  }
+}</code></pre>
+      <div class="callout warning">
+        <strong>Container note:</strong> this is not an HTTP service. Do not publish ports. The MCP host starts the container as a subprocess and talks to it over stdio.
+      </div>
+    </section>
+
+    <section id="config">
+      <h2>Configuration</h2>
+      <p><code>config.yaml</code> contains account definitions. Secrets should be referenced as environment variables instead of written directly.</p>
+      <pre><code>mastodon:
+  - id: main
+    instance_url: "https://mastodon.social"
+    access_token: "${MASTODON_MAIN_TOKEN}"
+
+bluesky:
+  - id: personal
+    handle: "example.bsky.social"
+    app_password: "${BSKY_PERSONAL_APP_PW}"
+  - id: public-project
+    handle: "example-project.bsky.social"
+    app_password: ""
+
+nostr:
+  - id: main
+    npub: "npub1..."
+    relays:
+      - "wss://relay.damus.io"
+      - "wss://nos.lol"</code></pre>
+      <table>
+        <thead><tr><th>Setting</th><th>Requirement</th></tr></thead>
+        <tbody>
+          <tr><td><code>mastodon[].instance_url</code></td><td>Must be an HTTPS URL.</td></tr>
+          <tr><td><code>mastodon[].access_token</code></td><td>Required. Use a read-scope token.</td></tr>
+          <tr><td><code>bluesky[].app_password</code></td><td>Optional. Blank or omitted means public-only reads.</td></tr>
+          <tr><td><code>nostr[].npub</code></td><td>Must start with <code>npub1</code>. Never use an <code>nsec</code>.</td></tr>
+          <tr><td><code>nostr[].relays</code></td><td>At least one <code>wss://</code> relay is required.</td></tr>
+        </tbody>
+      </table>
+      <p>Override paths when needed:</p>
+      <pre><code>export SOCIAL_READER_CONFIG=/path/to/config.yaml
+export CURSOR_STATE_PATH=/path/to/cursor_state.json</code></pre>
+    </section>
+
+    <section id="run">
+      <h2>Run the MCP server</h2>
+      <p>The server runs over stdio, so it is normally launched by an MCP host. To sanity-check it manually:</p>
+      <pre><code>node_modules/.bin/tsx src/server.ts</code></pre>
+      <p>You will not see a friendly HTTP page; stdio is reserved for JSON-RPC. Use an MCP client or host to call tools.</p>
+    </section>
+
+    <section id="connect">
+      <h2>Connect an MCP host</h2>
+      <h3>Claude Code / local MCP config</h3>
+      <p>The repo includes <code>.mcp.json</code>. Ensure the paths match your checkout:</p>
+      <pre><code>{
+  "mcpServers": {
+    "social-reader": {
+      "command": "/path/to/HermesSocialSummerizer/node_modules/.bin/tsx",
+      "args": ["/path/to/HermesSocialSummerizer/src/server.ts"]
+    }
+  }
+}</code></pre>
+      <h3>Hermes Agent</h3>
+      <pre><code>mcp_servers:
+  social-reader:
+    command: /path/to/HermesSocialSummerizer/node_modules/.bin/tsx
+    args: ["/path/to/HermesSocialSummerizer/src/server.ts"]</code></pre>
+      <p>If the host does not load <code>.env</code> from the repo working directory, pass the required environment variables through the MCP host config.</p>
+    </section>
+
+    <section id="tools">
+      <h2>Tool reference</h2>
+      <p>Always call <code>list_accounts</code> first. Every account-specific tool takes an <code>account_id</code> returned by that call.</p>
+      <h3>Account and lifecycle tools</h3>
+      <table>
+        <thead><tr><th>Tool</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>list_accounts</code></td><td>List configured account IDs and read-only guarantees.</td></tr>
+          <tr><td><code>reload_config</code></td><td>Reload <code>config.yaml</code> and rebuild clients without restarting the MCP host.</td></tr>
+          <tr><td><code>mark_seen</code></td><td>Advance one platform/account cursor after you have safely processed posts fetched with <code>advance_cursor: false</code>.</td></tr>
+        </tbody>
+      </table>
+      <h3>Timeline tools</h3>
+      <table>
+        <thead><tr><th>Tool</th><th>Platform</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td><code>mastodon_home_timeline</code></td><td>Mastodon</td><td>Cursor-tracked home timeline.</td></tr>
+          <tr><td><code>bluesky_timeline</code></td><td>Bluesky</td><td>Authenticated following feed or public reconstruction, depending on config.</td></tr>
+          <tr><td><code>nostr_following_feed</code></td><td>Nostr</td><td>Recent notes from followed pubkeys; can optionally fetch approximate engagement counts.</td></tr>
+        </tbody>
+      </table>
+      <h3>Engagement and enrichment tools</h3>
+      <table>
+        <thead><tr><th>Tool</th><th>Platform</th><th>Use for</th></tr></thead>
+        <tbody>
+          <tr><td><code>mastodon_favourites</code></td><td>Mastodon</td><td>Favourited posts.</td></tr>
+          <tr><td><code>mastodon_bookmarks</code></td><td>Mastodon</td><td>Bookmarked/saved posts.</td></tr>
+          <tr><td><code>mastodon_reblogs</code></td><td>Mastodon</td><td>Boosted posts.</td></tr>
+          <tr><td><code>bluesky_likes</code></td><td>Bluesky</td><td>Liked posts; requires authentication.</td></tr>
+          <tr><td><code>bluesky_reposts</code></td><td>Bluesky</td><td>Reposted posts; requires authentication.</td></tr>
+          <tr><td><code>nostr_my_reactions</code></td><td>Nostr</td><td>Published kind-7 reactions.</td></tr>
+          <tr><td><code>nostr_my_reposts</code></td><td>Nostr</td><td>Published kind-6 reposts.</td></tr>
+          <tr><td><code>nostr_my_bookmarks</code></td><td>Nostr</td><td>NIP-51 bookmark list; may include notes and long-form article addresses.</td></tr>
+          <tr><td><code>nostr_my_zaps</code></td><td>Nostr</td><td>Zap receipts where the configured npub is the sender.</td></tr>
+          <tr><td><code>nostr_get_event</code></td><td>Nostr</td><td>Dereference one event ID.</td></tr>
+          <tr><td><code>nostr_get_events</code></td><td>Nostr</td><td>Dereference up to 50 event IDs.</td></tr>
+          <tr><td><code>nostr_get_profile</code></td><td>Nostr</td><td>Fetch profile metadata for a hex pubkey.</td></tr>
+          <tr><td><code>nostr_get_article</code></td><td>Nostr</td><td>Fetch a NIP-23 long-form article by address.</td></tr>
+        </tbody>
+      </table>
+      <h3>Common response-size controls</h3>
+      <ul>
+        <li><code>limit</code>: defaults to 40 for Mastodon/Bluesky and 100 for Nostr; capped at 200.</li>
+        <li><code>max_pages</code>: timeline catch-up pages; capped at 10.</li>
+        <li><code>max_content_length</code>: truncates long text/content fields with an omitted-character suffix.</li>
+        <li><code>include_html</code>: Mastodon only; raw HTML is omitted by default.</li>
+      </ul>
+    </section>
+
+    <section id="cursors">
+      <h2>Cursor-safe usage</h2>
+      <p>Timeline tools advance cursors by default. That is convenient for interactive reads, but automation should usually be more careful.</p>
+      <div class="callout ok">
+        <strong>Safe automation pattern:</strong> call timeline tools with <code>advance_cursor: false</code>, persist or analyze the returned posts, then call <code>mark_seen</code> with the newest cursor value only after processing succeeds.
+      </div>
+      <table>
+        <thead><tr><th>Platform</th><th><code>mark_seen.cursor_value</code></th></tr></thead>
+        <tbody>
+          <tr><td>Mastodon</td><td>Newest post ID string.</td></tr>
+          <tr><td>Bluesky</td><td>Newest <code>created_at</code> ISO timestamp.</td></tr>
+          <tr><td>Nostr</td><td>Newest note <code>created_at</code> Unix timestamp.</td></tr>
+        </tbody>
+      </table>
+      <p>Cursor state defaults to <code>cursor_state.json</code> in the repo. Set <code>CURSOR_STATE_PATH</code> to keep it elsewhere.</p>
+    </section>
+
+    <section id="daily-digest">
+      <h2>Daily digest usage</h2>
+      <p>For social digest automation, pair this MCP with a Hermes-host collector such as HermesSocialDigestPipeline:</p>
+      <ol>
+        <li>Call <code>list_accounts</code> to discover accounts.</li>
+        <li>Fetch timelines with <code>advance_cursor: false</code>.</li>
+        <li>Persist compact candidates outside this repo.</li>
+        <li>Call <code>mark_seen</code> after persistence.</li>
+        <li>Use engagement-history tools to calibrate likely-interesting topics and authors.</li>
+      </ol>
+      <p class="muted">This MCP remains the source of social data. The digest pipeline owns scheduling, local cache, ranking prompts, and generated reports.</p>
+    </section>
+
+    <section id="operations">
+      <h2>Operations</h2>
+      <h3>Reload config without restarting</h3>
+      <p>After editing <code>config.yaml</code> or environment variables, call:</p>
+      <pre><code>reload_config</code></pre>
+      <p>This rebuilds platform clients. It also closes old Nostr relay connections before replacing them.</p>
+      <h3>Reset timeline cursors</h3>
+      <p>Stop the MCP host, delete or move <code>cursor_state.json</code>, then restart. Or use <code>CURSOR_STATE_PATH</code> to keep per-environment state files.</p>
+      <h3>Public-only Bluesky mode</h3>
+      <p>Leave <code>app_password</code> blank or omit it. Timeline results are reconstructed from public follows rather than the authenticated algorithmic following feed.</p>
+    </section>
+
+    <section id="troubleshooting">
+      <h2>Troubleshooting</h2>
+      <table>
+        <thead><tr><th>Symptom</th><th>What to check</th></tr></thead>
+        <tbody>
+          <tr><td>MCP host cannot start the server</td><td>Confirm the <code>command</code> path points to <code>node_modules/.bin/tsx</code> and that <code>npm install</code> has been run.</td></tr>
+          <tr><td><code>Invalid config.yaml</code></td><td>Check HTTPS Mastodon URLs, <code>wss://</code> Nostr relays, <code>npub1</code> public keys, and missing required env vars.</td></tr>
+          <tr><td>No accounts returned</td><td>Check <code>SOCIAL_READER_CONFIG</code>, <code>config.yaml</code> location, and top-level YAML keys.</td></tr>
+          <tr><td>Bluesky likes/reposts fail</td><td>Those tools require an authenticated Bluesky account. Public-only Bluesky mode cannot read private engagement history.</td></tr>
+          <tr><td>Repeated timeline items</td><td>Check whether automation is using <code>advance_cursor: false</code> without later calling <code>mark_seen</code>.</td></tr>
+          <tr><td>Unexpectedly empty timeline</td><td>Cursor state may already be advanced. Reset <code>cursor_state.json</code> or use a separate <code>CURSOR_STATE_PATH</code> for testing.</td></tr>
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>
