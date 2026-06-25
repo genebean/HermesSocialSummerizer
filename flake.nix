@@ -39,6 +39,7 @@
               nodejs_24
               deadnix # Nix dead-code linter
               nixfmt-tree # Nix formatter
+              pre-commit # Git hook runner
             ];
 
             shellHook = ''

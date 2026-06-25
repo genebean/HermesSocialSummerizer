@@ -15,7 +15,7 @@ jobs:
         with:
           python-version: "3.x"
       - name: Install npm dependencies
-        run: nix develop --command npm ci
+        run: nix develop --command npm ci --include=dev
       - uses: pre-commit/action@v3.0.1
 
   typecheck:
@@ -26,9 +26,21 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v22
       - uses: DeterminateSystems/magic-nix-cache-action@v14
       - name: Install npm dependencies
-        run: nix develop --command npm ci
+        run: nix develop --command npm ci --include=dev
       - name: Type check
         run: nix develop --command npm run typecheck
+
+  build:
+    name: npm build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Install npm dependencies
+        run: nix develop --command npm ci --include=dev
+      - name: Build package
+        run: nix develop --command npm run build
 
   nix-build:
     name: nix build
