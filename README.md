@@ -111,6 +111,77 @@ state directory, and installs a `social-reader` wrapper on `PATH`. Secret token
 values still come from the environment of the MCP host that launches the
 wrapper.
 
+### Running over HTTP (LAN)
+
+To make this server reachable from other machines on your LAN — other Hermes
+instances, Claude Code on a different box — set `SOCIAL_READER_TRANSPORT=http`.
+The stdio path is completely unchanged when this variable is unset.
+
+**Environment variables**
+
+| Variable | Default | Description |
+|---|---|---|
+| `SOCIAL_READER_TRANSPORT` | `stdio` | Set to `http` to enable the HTTP listener. |
+| `SOCIAL_READER_HTTP_HOST` | `127.0.0.1` | Address to bind. Change to a LAN IP to expose on the network. |
+| `SOCIAL_READER_HTTP_PORT` | `8787` | Port to listen on. |
+| `SOCIAL_READER_HTTP_TOKEN` | _(required)_ | Literal bearer token. |
+| `SOCIAL_READER_HTTP_TOKEN_FILE` | _(alternative)_ | Path to a file whose content is the token (trailing whitespace stripped). Preferred for systemd deployments — keeps the raw secret out of `systemctl show` output. |
+
+The server will refuse to start if no token is configured. It will also refuse
+to bind on a non-loopback address without a token.
+
+**Quick start**
+
+```bash
+export SOCIAL_READER_TRANSPORT=http
+export SOCIAL_READER_HTTP_HOST=0.0.0.0   # listen on all interfaces
+export SOCIAL_READER_HTTP_PORT=8787
+export SOCIAL_READER_HTTP_TOKEN=mysecrettoken
+export MASTODON_MAIN_TOKEN=...           # your normal credentials
+node_modules/.bin/tsx src/server.ts
+```
+
+**Verify the server is up**
+
+```bash
+curl http://localhost:8787/healthz
+# → {"status":"ok"}
+```
+
+**Call a tool (tools/list)**
+
+```bash
+curl -s http://192.168.1.10:8787/mcp \
+  -H "Authorization: Bearer mysecrettoken" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq .
+```
+
+**Wire into a remote MCP host**
+
+```json
+{
+  "mcpServers": {
+    "social-reader": {
+      "type": "http",
+      "url": "http://192.168.1.10:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer mysecrettoken"
+      }
+    }
+  }
+}
+```
+
+**Two processes, one server** — if you want to use both stdio (for local Claude
+Code) and HTTP (for LAN) simultaneously, run two separate processes with
+different `CURSOR_STATE_PATH` values. Running two live consumers against the
+same cursor file would race over the same per-account cursor.
+
+**NixOS deployment** — the flake exports `nixosModules.default` with
+`services.social-reader.http` options. See the [NixOS module](#running-with-nix)
+section and `nix/module.nix` for the full option set.
+
 ### Running as a container
 
 Build the Docker/OCI-compatible image:

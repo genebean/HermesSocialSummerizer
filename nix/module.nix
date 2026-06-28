@@ -1,19 +1,26 @@
 # NixOS module for social-reader.
 #
-# This is a read-only MCP stdio server — it has no open port and no
-# long-running daemon. The MCP host (Claude Code, Hermes, etc.) launches it
-# as a subprocess on demand. The module's job is to:
-#   1. Write a generated config.yaml to the Nix store (no secrets — only
-#      ${ENV_VAR} placeholders that the app resolves at runtime)
-#   2. Create a writable data directory for cursor state
-#   3. Install a wrapper binary that sets SOCIAL_READER_CONFIG and
-#      CURSOR_STATE_PATH, so the MCP host's command entry can be just
-#      "social-reader" with no extra flags
+# Supports two transport modes:
 #
-# Secrets (actual token values) are never in the Nix store. They come from
-# the environment of the process that launches social-reader — typically the
-# MCP host's systemd EnvironmentFile, the user's shell environment, or
-# Docker's --env-file.
+#   stdio (default)
+#     A read-only MCP server with no open port and no long-running daemon.
+#     The MCP host (Claude Code, Hermes, etc.) launches it as a subprocess on
+#     demand. The module:
+#       1. Writes a generated config.yaml to the Nix store (no secrets — only
+#          ${ENV_VAR} placeholders the app resolves at runtime)
+#       2. Creates a writable data directory for cursor state
+#       3. Installs a wrapper binary that sets SOCIAL_READER_CONFIG and
+#          CURSOR_STATE_PATH so the MCP host's command entry is just "social-reader"
+#
+#   http (services.social-reader.http.enable = true)
+#     Adds a systemd service (social-reader-http) that starts the same binary
+#     with SOCIAL_READER_TRANSPORT=http, binding a bearer-token-protected MCP
+#     endpoint on the configured host:port. Useful for MCP hosts on other LAN
+#     machines (other Hermes instances, Claude Code on a different box).
+#
+# Secrets (actual token values) are never in the Nix store. They come from the
+# environment of the process — either the MCP host's systemd EnvironmentFile,
+# the user's shell, Docker --env-file, or the http.environmentFile option.
 
 self:
 {
@@ -229,6 +236,66 @@ in
       default = [ ];
       description = "Nostr accounts to configure. Only the public key (npub) is ever stored.";
     };
+
+    http = {
+      enable = lib.mkEnableOption "HTTP transport for social-reader MCP server (LAN-facing bearer-token-gated listener)";
+
+      port = lib.mkOption {
+        type = lib.types.port;
+        default = 8787;
+        description = "Port for the HTTP MCP listener.";
+      };
+
+      bindAddress = lib.mkOption {
+        type = lib.types.str;
+        default = "127.0.0.1";
+        description = ''
+          Address the HTTP listener binds to. The default (127.0.0.1) restricts
+          access to the local machine. Setting this to a LAN-facing address
+          (e.g. "192.168.1.10" or "0.0.0.0") exposes the server on the network.
+          This is what makes the runtime no-token-on-non-loopback guard relevant:
+          the server will refuse to start without a configured bearer token when
+          bound to a non-loopback address.
+        '';
+      };
+
+      tokenEnv = lib.mkOption {
+        type = lib.types.str;
+        default = "SOCIAL_READER_HTTP_TOKEN";
+        example = "SOCIAL_READER_HTTP_TOKEN";
+        description = ''
+          Name of the environment variable that holds the bearer token used to
+          authenticate HTTP requests. The actual token value is never stored in
+          the Nix configuration — it must come from the process environment or
+          from <option>services.social-reader.http.environmentFile</option>.
+
+          This follows the same pattern as accessTokenEnv and appPasswordEnv:
+          the option holds the variable *name*, not the secret itself.
+
+          The server reads SOCIAL_READER_HTTP_TOKEN (literal value) or
+          SOCIAL_READER_HTTP_TOKEN_FILE (path to a file containing the token)
+          from the environment. Name your secret accordingly in environmentFile.
+        '';
+      };
+
+      environmentFile = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = "/run/secrets/social-reader-http";
+        description = ''
+          Path to a file containing environment variable assignments injected
+          into the social-reader-http systemd service. Intended for use with
+          sops-nix or agenix to supply the bearer token and any platform
+          credentials without embedding secrets in the Nix store or the unit.
+
+          The file should define at least the bearer token — for example:
+            SOCIAL_READER_HTTP_TOKEN=mysecrettoken
+            MASTODON_MAIN_TOKEN=mymastodontoken
+
+          Passed directly to the systemd unit as EnvironmentFile=.
+        '';
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -243,5 +310,36 @@ in
     # already set. You still need to supply the secret env vars (token values)
     # via the MCP host's own environment or EnvironmentFile.
     environment.systemPackages = [ wrapper ];
+
+    # HTTP transport systemd service — only created when http.enable = true.
+    # Runs the same wrapper binary as stdio mode but with SOCIAL_READER_TRANSPORT=http
+    # so it binds an HTTP listener instead of reading/writing stdio.
+    #
+    # Two process instances can coexist (one stdio, one HTTP) as long as they use
+    # different cursor state files (CURSOR_STATE_PATH). Running two live consumers
+    # against the same cursor file would race over the same per-account cursor.
+    systemd.services.social-reader-http = lib.mkIf cfg.http.enable {
+      description = "social-reader MCP server (HTTP transport)";
+      wantedBy = [ "multi-user.target" ];
+      after = [ "network.target" ];
+
+      environment = {
+        # Tell the binary to bind an HTTP listener instead of using stdio.
+        SOCIAL_READER_TRANSPORT = "http";
+        SOCIAL_READER_HTTP_PORT = toString cfg.http.port;
+        SOCIAL_READER_HTTP_HOST = cfg.http.bindAddress;
+      };
+
+      serviceConfig = {
+        ExecStart = "${wrapper}/bin/social-reader";
+        Restart = "on-failure";
+      }
+      # Run as the configured user when set — same account that owns dataDir.
+      // lib.optionalAttrs (cfg.user != null) { User = cfg.user; }
+      # Inject secrets (bearer token, platform credentials) from the secret file.
+      // lib.optionalAttrs (cfg.http.environmentFile != null) {
+        EnvironmentFile = cfg.http.environmentFile;
+      };
+    };
   };
 }

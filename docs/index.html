@@ -102,6 +102,7 @@
         <li><a href="#setup">Setup</a></li>
         <li><a href="#nix">Run with Nix</a></li>
         <li><a href="#container">Run as a container</a></li>
+        <li><a href="#http">Run over HTTP (LAN)</a></li>
         <li><a href="#config">Configuration</a></li>
         <li><a href="#run">Run the MCP server</a></li>
         <li><a href="#connect">Connect an MCP host</a></li>
@@ -261,6 +262,94 @@ docker load &lt; result</code></pre>
       <div class="callout warning">
         <strong>Container note:</strong> this is not an HTTP service. Do not publish ports. The MCP host starts the container as a subprocess and talks to it over stdio.
       </div>
+    </section>
+
+    <section id="http">
+      <h2>Run over HTTP (LAN)</h2>
+      <p>Set <code>SOCIAL_READER_TRANSPORT=http</code> to start a bearer-token-protected HTTP listener instead of reading/writing stdio. This makes the server reachable from other LAN machines — other Hermes instances, Claude Code on a different box. The stdio path is completely unchanged when this variable is unset.</p>
+
+      <div class="callout warning">
+        <strong>Two processes, one server:</strong> if you want both stdio (local Claude Code) and HTTP (LAN) simultaneously, run two separate processes with different <code>CURSOR_STATE_PATH</code> values. Two live consumers on the same cursor file will race over the same per-account cursor.
+      </div>
+
+      <h3>Environment variables</h3>
+      <table>
+        <thead><tr><th>Variable</th><th>Default</th><th>Description</th></tr></thead>
+        <tbody>
+          <tr><td><code>SOCIAL_READER_TRANSPORT</code></td><td><code>stdio</code></td><td>Set to <code>http</code> to start the HTTP listener.</td></tr>
+          <tr><td><code>SOCIAL_READER_HTTP_HOST</code></td><td><code>127.0.0.1</code></td><td>Address to bind. Change to a LAN IP or <code>0.0.0.0</code> to expose on the network.</td></tr>
+          <tr><td><code>SOCIAL_READER_HTTP_PORT</code></td><td><code>8787</code></td><td>Port to listen on.</td></tr>
+          <tr><td><code>SOCIAL_READER_HTTP_TOKEN</code></td><td><em>required</em></td><td>Literal bearer token string. The server refuses to start without a token.</td></tr>
+          <tr><td><code>SOCIAL_READER_HTTP_TOKEN_FILE</code></td><td><em>alternative</em></td><td>Path to a file whose content is the token (trailing whitespace stripped). Preferred for systemd — keeps the raw secret out of <code>systemctl show</code> output.</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Quick start</h3>
+      <pre><code>export SOCIAL_READER_TRANSPORT=http
+export SOCIAL_READER_HTTP_HOST=0.0.0.0
+export SOCIAL_READER_HTTP_PORT=8787
+export SOCIAL_READER_HTTP_TOKEN=mysecrettoken
+export MASTODON_MAIN_TOKEN=...
+node_modules/.bin/tsx src/server.ts</code></pre>
+
+      <h3>Verify the listener</h3>
+      <pre><code>curl http://localhost:8787/healthz
+# → {"status":"ok"}</code></pre>
+
+      <h3>Call a tool from another machine</h3>
+      <pre><code>curl -s http://192.168.1.10:8787/mcp \
+  -H "Authorization: Bearer mysecrettoken" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq .</code></pre>
+
+      <h3>Wire into a remote MCP host</h3>
+      <pre><code>{
+  "mcpServers": {
+    "social-reader": {
+      "type": "http",
+      "url": "http://192.168.1.10:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer mysecrettoken"
+      }
+    }
+  }
+}</code></pre>
+
+      <h3>NixOS systemd service</h3>
+      <p>The <code>nixosModules.default</code> export adds <code>services.social-reader.http</code> options that create a <code>social-reader-http</code> systemd unit:</p>
+      <pre><code>{ inputs, ... }:
+{
+  imports = [ inputs.social-reader.nixosModules.default ];
+
+  services.social-reader = {
+    enable = true;
+    user = "gene";
+
+    mastodon = [{ id = "main"; instanceUrl = "https://mastodon.social";
+                  accessTokenEnv = "MASTODON_MAIN_TOKEN"; }];
+
+    http = {
+      enable      = true;
+      port        = 8787;
+      bindAddress = "192.168.1.10";   # LAN-facing; requires a token
+      tokenEnv    = "SOCIAL_READER_HTTP_TOKEN";
+
+      # sops-nix / agenix secret file — contains at least:
+      #   SOCIAL_READER_HTTP_TOKEN=mysecrettoken
+      #   MASTODON_MAIN_TOKEN=mymastodontoken
+      environmentFile = "/run/secrets/social-reader-http";
+    };
+  };
+}</code></pre>
+      <p>The service sets <code>SOCIAL_READER_TRANSPORT=http</code> and runs the same <code>social-reader</code> wrapper already installed for stdio use. No separate binary needed.</p>
+
+      <h3>Auth details</h3>
+      <ul>
+        <li><code>GET /healthz</code> — unauthenticated; returns <code>{"status":"ok"}</code>. No account data.</li>
+        <li><code>POST /mcp</code> — requires <code>Authorization: Bearer &lt;token&gt;</code>. Rejections are logged to stderr with timestamp and source IP, but never the token value.</li>
+        <li>All other routes — 404 after auth check (so callers know they reached the right server).</li>
+        <li>Token comparison uses constant-time equality (<code>crypto.timingSafeEqual</code>) to prevent timing attacks.</li>
+      </ul>
     </section>
 
     <section id="config">
