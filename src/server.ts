@@ -82,11 +82,14 @@ function mp(a: Record<string, unknown>): number {
 }
 
 // ── MCP server setup ─────────────────────────────────────────────────────────
-
-const server = new Server(
-  { name: "social-reader", version: "2.0.0" },
-  { capabilities: { tools: {} } }
-);
+//
+// createConfiguredServer() is a factory rather than a module-level singleton
+// so HTTP mode can create one Server per request (stateless transport pattern).
+// In stdio mode the factory is called exactly once.
+//
+// Handler closures reference the module-level `config` and `clients` variables,
+// so all Server instances — whether one (stdio) or many (HTTP) — share the same
+// social platform connections and cursor state file.
 
 const LIMIT_SCHEMA = { type: "number", minimum: 1, maximum: 200 } as const;
 const MAX_PAGES_SCHEMA = {
@@ -112,7 +115,13 @@ const MAX_CONTENT_LENGTH_SCHEMA = {
   description: "Truncate text/content fields to this many characters. Omit for no truncation.",
 } as const;
 
-server.setRequestHandler(ListToolsRequestSchema, async () => ({
+function createConfiguredServer(): Server {
+  const srv = new Server(
+    { name: "social-reader-mcp", version: "2.0.0" },
+    { capabilities: { tools: {} } }
+  );
+
+  srv.setRequestHandler(ListToolsRequestSchema, async () => ({
   tools: [
     {
       name: "list_accounts",
@@ -359,7 +368,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
   ],
 }));
 
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  srv.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args = {} } = request.params;
   const a = args;
 
@@ -605,9 +614,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       content: [{ type: "text", text: e instanceof Error ? e.message : String(e) }],
     };
   }
-});
+  });
+
+  return srv;
+}
 
 // ── Start ─────────────────────────────────────────────────────────────────────
+//
+// SOCIAL_READER_MCP_TRANSPORT=http  → HTTP transport (bearer-token-gated LAN listener)
+// unset or "stdio"                  → stdio transport (default; byte-for-byte identical
+//                                     to previous behaviour — zero risk to existing users)
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+if (process.env.SOCIAL_READER_MCP_TRANSPORT === "http") {
+  // Dynamic import keeps this module out of the stdio path so stdio startup is
+  // unchanged even on systems where the HTTP deps (node:http, timingSafeEqual,
+  // etc.) might behave differently.
+  const { startHttpServer } = await import("./http-transport.js");
+  await startHttpServer(createConfiguredServer);
+} else {
+  const transport = new StdioServerTransport();
+  await createConfiguredServer().connect(transport);
+}

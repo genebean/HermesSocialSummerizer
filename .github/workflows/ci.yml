@@ -12,7 +12,7 @@ jobs:
   nix-build:
     uses: genebean/.github/.github/workflows/nix-build.yml@main
     with:
-      npmDepsHash-glob: pkgs/social-reader.nix
+      npmDepsHash-glob: pkgs/social-reader-mcp.nix
       nixos-config-test: true
 
   typecheck:
@@ -38,6 +38,18 @@ jobs:
         run: nix develop --command npm ci --include=dev
       - name: Build package
         run: nix develop --command npm run build
+
+  unit-tests:
+    name: Unit tests (CI-safe)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/nix-installer-action@v22
+      - uses: DeterminateSystems/magic-nix-cache-action@v14
+      - name: Install npm dependencies
+        run: nix develop --command npm ci --include=dev
+      - name: Run unit tests
+        run: nix develop --command npm run unit
 
   npm-audit:
     name: npm audit

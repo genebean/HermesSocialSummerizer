@@ -1,4 +1,4 @@
-# HermesSocialSummerizer
+# social-reader-mcp
 
 A read-only MCP server for Mastodon, Bluesky, and Nostr, supporting multiple
 accounts per platform. Built so that an agent (Hermes, Claude, or anything
@@ -26,25 +26,33 @@ On top of all three: this codebase contains no `post_status`, `create_post`,
 ## Layout
 
 ```
-HermesSocialSummerizer/
+social-reader-mcp/   (repo root: HermesSocialSummerizer/)
   src/
     server.ts           # MCP server — tool definitions and handlers
     config.ts           # Config loader with ${ENV_VAR} expansion
     state.ts            # Cursor/pagination state (atomic JSON writes)
+    http-transport.ts   # HTTP transport with bearer-token auth
+    unit-tests.ts       # CI-safe unit tests
     clients/
       mastodon.ts       # Native fetch, read-only Mastodon client
       bluesky.ts        # @atproto/api, handles JWT refresh automatically
       nostr.ts          # nostr-tools SimplePool, EOSE-based relay queries
+  pkgs/
+    social-reader-mcp.nix  # Nix package derivation
+    container.nix           # Docker/OCI image
+  nix/
+    module.nix          # NixOS module
   config.example.yaml   # Copy to config.yaml and fill in
   package.json
   tsconfig.json
+  flake.nix             # Nix flake
   .mcp.json             # Wires this server into Claude Code / Hermes
 ```
 
 ## Setup
 
 ```bash
-cd HermesSocialSummerizer
+cd social-reader-mcp   # or wherever you cloned HermesSocialSummerizer
 npm install
 cp config.example.yaml config.yaml
 # edit config.yaml — add your accounts and env var names for secrets
@@ -99,17 +107,88 @@ nix build
 The result contains a stdio MCP binary:
 
 ```bash
-./result/bin/social-reader
+./result/bin/social-reader-mcp
 ```
 
-Set `SOCIAL_READER_CONFIG`, `CURSOR_STATE_PATH`, and the credential env vars
+Set `SOCIAL_READER_MCP_CONFIG`, `CURSOR_STATE_PATH`, and the credential env vars
 required by your config before launching it from an MCP host.
 
 The flake also exports `nixosModules.default`. The module writes a generated
 non-secret config with `${ENV_VAR}` placeholders, creates a writable cursor
-state directory, and installs a `social-reader` wrapper on `PATH`. Secret token
+state directory, and installs a `social-reader-mcp` wrapper on `PATH`. Secret token
 values still come from the environment of the MCP host that launches the
 wrapper.
+
+### Running over HTTP (LAN)
+
+To make this server reachable from other machines on your LAN — other Hermes
+instances, Claude Code on a different box — set `SOCIAL_READER_MCP_TRANSPORT=http`.
+The stdio path is completely unchanged when this variable is unset.
+
+**Environment variables**
+
+| Variable | Default | Description |
+|---|---|---|
+| `SOCIAL_READER_MCP_TRANSPORT` | `stdio` | Set to `http` to enable the HTTP listener. |
+| `SOCIAL_READER_MCP_HTTP_HOST` | `127.0.0.1` | Address to bind. Change to a LAN IP to expose on the network. |
+| `SOCIAL_READER_MCP_HTTP_PORT` | `8787` | Port to listen on. |
+| `SOCIAL_READER_MCP_HTTP_TOKEN` | _(required)_ | Literal bearer token. |
+| `SOCIAL_READER_MCP_HTTP_TOKEN_FILE` | _(alternative)_ | Path to a file whose content is the token (trailing whitespace stripped). Preferred for systemd deployments — keeps the raw secret out of `systemctl show` output. |
+
+The server will refuse to start if no token is configured. It will also refuse
+to bind on a non-loopback address without a token.
+
+**Quick start**
+
+```bash
+export SOCIAL_READER_MCP_TRANSPORT=http
+export SOCIAL_READER_MCP_HTTP_HOST=0.0.0.0   # listen on all interfaces
+export SOCIAL_READER_MCP_HTTP_PORT=8787
+export SOCIAL_READER_MCP_HTTP_TOKEN=mysecrettoken
+export MASTODON_MAIN_TOKEN=...               # your normal credentials
+node_modules/.bin/tsx src/server.ts
+```
+
+**Verify the server is up**
+
+```bash
+curl http://localhost:8787/healthz
+# → {"status":"ok"}
+```
+
+**Call a tool (tools/list)**
+
+```bash
+curl -s http://192.168.1.10:8787/mcp \
+  -H "Authorization: Bearer mysecrettoken" \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | jq .
+```
+
+**Wire into a remote MCP host**
+
+```json
+{
+  "mcpServers": {
+    "social-reader-mcp": {
+      "type": "http",
+      "url": "http://192.168.1.10:8787/mcp",
+      "headers": {
+        "Authorization": "Bearer mysecrettoken"
+      }
+    }
+  }
+}
+```
+
+**Two processes, one server** — if you want to use both stdio (for local Claude
+Code) and HTTP (for LAN) simultaneously, run two separate processes with
+different `CURSOR_STATE_PATH` values. Running two live consumers against the
+same cursor file would race over the same per-account cursor.
+
+**NixOS deployment** — the flake exports `nixosModules.default` with
+`services.social-reader-mcp.http` options. See the [NixOS module](#running-with-nix)
+section and `nix/module.nix` for the full option set.
 
 ### Running as a container
 
@@ -120,22 +199,22 @@ nix build .#container
 docker load < result
 ```
 
-The image is named `social-reader:latest`. It is still a stdio MCP server, not
-an HTTP service, so run it interactively from your MCP host:
+The image is named `social-reader-mcp:latest`. It is still a stdio MCP server,
+not an HTTP service, so run it interactively from your MCP host:
 
 ```json
 {
   "mcpServers": {
-    "social-reader": {
+    "social-reader-mcp": {
       "command": "docker",
       "args": [
         "run", "--rm", "-i",
         "--env-file", "/path/to/.env",
-        "-e", "SOCIAL_READER_CONFIG=/config/config.yaml",
+        "-e", "SOCIAL_READER_MCP_CONFIG=/config/config.yaml",
         "-e", "CURSOR_STATE_PATH=/data/cursor_state.json",
         "-v", "/path/to/config.yaml:/config/config.yaml:ro",
-        "-v", "/path/to/social-reader-data:/data",
-        "social-reader:latest"
+        "-v", "/path/to/social-reader-mcp-data:/data",
+        "social-reader-mcp:latest"
       ]
     }
   }
@@ -230,7 +309,7 @@ reset to a fresh read.
 ```json
 {
   "mcpServers": {
-    "social-reader": {
+    "social-reader-mcp": {
       "command": "/path/to/HermesSocialSummerizer/node_modules/.bin/tsx",
       "args": ["/path/to/HermesSocialSummerizer/src/server.ts"]
     }
@@ -244,7 +323,7 @@ Update the paths to match your checkout location.
 
 ```yaml
 mcp_servers:
-  social-reader:
+  social-reader-mcp:
     command: /path/to/HermesSocialSummerizer/node_modules/.bin/tsx
     args: ["/path/to/HermesSocialSummerizer/src/server.ts"]
     env:
