@@ -7,18 +7,18 @@
  *     instance so there is no shared per-session state to race over
  *   - structured stderr logging for auth rejections — never logs the token value
  *
- * This module is only imported when SOCIAL_READER_TRANSPORT=http is set.
+ * This module is only imported when SOCIAL_READER_MCP_TRANSPORT=http is set.
  * The stdio path in server.ts is entirely unchanged.
  *
  * Token sources (checked in order):
- *   SOCIAL_READER_HTTP_TOKEN      — literal token string in environment
- *   SOCIAL_READER_HTTP_TOKEN_FILE — path to a file whose first line is the token
- *                                   (useful with sops-nix / agenix secret files;
- *                                    trailing whitespace / newlines are stripped)
+ *   SOCIAL_READER_MCP_HTTP_TOKEN      — literal token string in environment
+ *   SOCIAL_READER_MCP_HTTP_TOKEN_FILE — path to a file whose content is the token
+ *                                       (useful with sops-nix / agenix secret files;
+ *                                        trailing whitespace / newlines are stripped)
  *
  * Network config:
- *   SOCIAL_READER_HTTP_HOST  — address to bind (default 127.0.0.1)
- *   SOCIAL_READER_HTTP_PORT  — port to listen on  (default 8787)
+ *   SOCIAL_READER_MCP_HTTP_HOST — address to bind (default 127.0.0.1)
+ *   SOCIAL_READER_MCP_HTTP_PORT — port to listen on (default 8787)
  */
 
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
@@ -37,10 +37,10 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
  * never appears in `systemctl show` output or process listings.
  */
 function loadBearerToken(): string {
-  const direct = process.env.SOCIAL_READER_HTTP_TOKEN;
+  const direct = process.env.SOCIAL_READER_MCP_HTTP_TOKEN;
   if (direct) return direct;
 
-  const filePath = process.env.SOCIAL_READER_HTTP_TOKEN_FILE;
+  const filePath = process.env.SOCIAL_READER_MCP_HTTP_TOKEN_FILE;
   if (filePath) {
     // Replace trailing whitespace — editors commonly append a newline.
     return readFileSync(filePath, "utf-8").replace(/\s+$/, "");
@@ -96,7 +96,7 @@ function readBody(req: IncomingMessage): Promise<unknown> {
 /** Writes a 401 response and logs the rejection — never includes the token value. */
 function send401(res: ServerResponse, sourceIp: string, path: string): void {
   const ts = new Date().toISOString();
-  process.stderr.write(`[social-reader] auth-rejected ts=${ts} ip=${sourceIp} path=${path}\n`);
+  process.stderr.write(`[social-reader-mcp] auth-rejected ts=${ts} ip=${sourceIp} path=${path}\n`);
   res.writeHead(401, { "Content-Type": "application/json" });
   res.end(JSON.stringify({ error: "unauthorized" }));
 }
@@ -118,18 +118,18 @@ function send401(res: ServerResponse, sourceIp: string, path: string): void {
 export async function startHttpServer(
   createConfiguredServer: () => Server
 ): Promise<import("node:http").Server> {
-  const host = process.env.SOCIAL_READER_HTTP_HOST ?? "127.0.0.1";
-  const port = parseInt(process.env.SOCIAL_READER_HTTP_PORT ?? "8787", 10);
+  const host = process.env.SOCIAL_READER_MCP_HTTP_HOST ?? "127.0.0.1";
+  const port = parseInt(process.env.SOCIAL_READER_MCP_HTTP_PORT ?? "8787", 10);
   const token = loadBearerToken();
 
   // Specific error when a non-loopback bind is attempted without a token —
   // this would expose the MCP server to the network with no authentication.
   if (!token && !isLoopback(host)) {
     process.stderr.write(
-      `[social-reader] ERROR: SOCIAL_READER_HTTP_HOST="${host}" is a non-loopback address\n` +
+      `[social-reader-mcp] ERROR: SOCIAL_READER_MCP_HTTP_HOST="${host}" is a non-loopback address\n` +
         `  but no bearer token is configured. The server will not start without a token\n` +
-        `  when bound to a network-facing address. Set SOCIAL_READER_HTTP_TOKEN or\n` +
-        `  SOCIAL_READER_HTTP_TOKEN_FILE.\n`
+        `  when bound to a network-facing address. Set SOCIAL_READER_MCP_HTTP_TOKEN or\n` +
+        `  SOCIAL_READER_MCP_HTTP_TOKEN_FILE.\n`
     );
     process.exit(1);
   }
@@ -138,9 +138,9 @@ export async function startHttpServer(
   // always a misconfiguration, not a valid "anonymous" mode.
   if (!token) {
     process.stderr.write(
-      `[social-reader] ERROR: SOCIAL_READER_TRANSPORT=http requires a bearer token.\n` +
-        `  Set SOCIAL_READER_HTTP_TOKEN (literal value in env) or\n` +
-        `      SOCIAL_READER_HTTP_TOKEN_FILE (path to a file containing the token).\n`
+      `[social-reader-mcp] ERROR: SOCIAL_READER_TRANSPORT=http requires a bearer token.\n` +
+        `  Set SOCIAL_READER_MCP_HTTP_TOKEN (literal value in env) or\n` +
+        `      SOCIAL_READER_MCP_HTTP_TOKEN_FILE (path to a file containing the token).\n`
     );
     process.exit(1);
   }
@@ -195,7 +195,7 @@ export async function startHttpServer(
           res.end(JSON.stringify({ error: "internal server error" }));
         }
         process.stderr.write(
-          `[social-reader] /mcp handler error: ${e instanceof Error ? e.message : String(e)}\n`
+          `[social-reader-mcp] /mcp handler error: ${e instanceof Error ? e.message : String(e)}\n`
         );
       }
       return;
@@ -210,7 +210,7 @@ export async function startHttpServer(
     httpServer.on("error", reject);
     httpServer.listen(port, host, () => {
       process.stderr.write(
-        `[social-reader] HTTP transport listening on http://${host}:${port}/mcp\n`
+        `[social-reader-mcp] HTTP transport listening on http://${host}:${port}/mcp\n`
       );
       resolve();
     });

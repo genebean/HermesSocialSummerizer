@@ -23,7 +23,7 @@
           p = ourPkgs system;
         in
         {
-          default = p.social-reader;
+          default = p.social-reader-mcp;
           container = p.container;
         }
       );
@@ -45,18 +45,18 @@
             shellHook = ''
               # After changing package-lock.json, recompute the npmDepsHash:
               #   nix run nixpkgs#prefetch-npm-deps package-lock.json
-              # Then update the hash in pkgs/social-reader.nix.
+              # Then update the hash in pkgs/social-reader-mcp.nix.
 
               if [[ "$-" == *i* ]]; then
                 echo ""
-                echo "social-reader dev shell (Node $(node --version))"
+                echo "social-reader-mcp dev shell (Node $(node --version))"
                 echo "  npm install        install / update node_modules"
                 echo "  npm run unit       CI-safe unit tests (no credentials needed)"
                 echo "  npm test           run integration smoke tests (needs config.yaml + .env)"
                 echo "  npm run typecheck  TypeScript type check"
                 echo "  npm run build      compile src/ → dist/"
                 echo "  npm start          start MCP server (stdio, normally launched by MCP host)"
-                echo "  SOCIAL_READER_TRANSPORT=http npm start   start in HTTP transport mode"
+                echo "  SOCIAL_READER_MCP_TRANSPORT=http npm start   start in HTTP transport mode"
                 echo ""
                 echo "  nix build          build production package"
                 echo "  nix build .#container  build Docker image (load with: docker load < result)"
@@ -76,7 +76,7 @@
         modules = [
           self.nixosModules.default
           {
-            services.social-reader = {
+            services.social-reader-mcp = {
               enable = true;
               user = "alice";
               mastodon = [

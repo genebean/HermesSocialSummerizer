@@ -117,7 +117,7 @@ const MAX_CONTENT_LENGTH_SCHEMA = {
 
 function createConfiguredServer(): Server {
   const srv = new Server(
-    { name: "social-reader", version: "2.0.0" },
+    { name: "social-reader-mcp", version: "2.0.0" },
     { capabilities: { tools: {} } }
   );
 
@@ -621,11 +621,11 @@ function createConfiguredServer(): Server {
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 //
-// SOCIAL_READER_TRANSPORT=http  → HTTP transport (bearer-token-gated LAN listener)
-// unset or "stdio"              → stdio transport (default; byte-for-byte identical
-//                                 to previous behaviour — zero risk to existing users)
+// SOCIAL_READER_MCP_TRANSPORT=http  → HTTP transport (bearer-token-gated LAN listener)
+// unset or "stdio"                  → stdio transport (default; byte-for-byte identical
+//                                     to previous behaviour — zero risk to existing users)
 
-if (process.env.SOCIAL_READER_TRANSPORT === "http") {
+if (process.env.SOCIAL_READER_MCP_TRANSPORT === "http") {
   // Dynamic import keeps this module out of the stdio path so stdio startup is
   // unchanged even on systems where the HTTP deps (node:http, timingSafeEqual,
   // etc.) might behave differently.

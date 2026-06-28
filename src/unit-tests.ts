@@ -209,22 +209,22 @@ describe("HTTP transport", () => {
     // Set env vars the server reads at startup, then restore after binding so
     // the rest of the process is not polluted.
     const saved = {
-      token: process.env.SOCIAL_READER_HTTP_TOKEN,
-      host: process.env.SOCIAL_READER_HTTP_HOST,
-      port: process.env.SOCIAL_READER_HTTP_PORT,
+      token: process.env.SOCIAL_READER_MCP_HTTP_TOKEN,
+      host: process.env.SOCIAL_READER_MCP_HTTP_HOST,
+      port: process.env.SOCIAL_READER_MCP_HTTP_PORT,
     };
-    process.env.SOCIAL_READER_HTTP_TOKEN = TOKEN;
-    process.env.SOCIAL_READER_HTTP_HOST = "127.0.0.1";
-    process.env.SOCIAL_READER_HTTP_PORT = "0"; // OS picks a free ephemeral port
+    process.env.SOCIAL_READER_MCP_HTTP_TOKEN = TOKEN;
+    process.env.SOCIAL_READER_MCP_HTTP_HOST = "127.0.0.1";
+    process.env.SOCIAL_READER_MCP_HTTP_PORT = "0"; // OS picks a free ephemeral port
 
     srv = await startHttpServer(makeMinimalServer);
     const addr = srv.address() as import("node:net").AddressInfo;
     base = `http://127.0.0.1:${addr.port}`;
 
     // Restore — the server captured what it needed during startup.
-    process.env.SOCIAL_READER_HTTP_TOKEN = saved.token;
-    process.env.SOCIAL_READER_HTTP_HOST = saved.host;
-    process.env.SOCIAL_READER_HTTP_PORT = saved.port;
+    process.env.SOCIAL_READER_MCP_HTTP_TOKEN = saved.token;
+    process.env.SOCIAL_READER_MCP_HTTP_HOST = saved.host;
+    process.env.SOCIAL_READER_MCP_HTTP_PORT = saved.port;
   });
 
   after(async () => {

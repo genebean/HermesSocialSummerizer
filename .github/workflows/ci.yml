@@ -12,7 +12,7 @@ jobs:
   nix-build:
     uses: genebean/.github/.github/workflows/nix-build.yml@main
     with:
-      npmDepsHash-glob: pkgs/social-reader.nix
+      npmDepsHash-glob: pkgs/social-reader-mcp.nix
       nixos-config-test: true
 
   typecheck:

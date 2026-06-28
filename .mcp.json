@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "social-reader": {
+    "social-reader-mcp": {
       "command": "/path/to/HermesSocialSummerizer/node_modules/.bin/tsx",
       "args": ["/path/to/HermesSocialSummerizer/src/server.ts"]
     }
