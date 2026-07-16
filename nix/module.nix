@@ -48,7 +48,9 @@ let
         + "    instance_url: \""
         + a.instanceUrl
         + "\"\n"
-        + "    access_token: \"${" + a.accessTokenEnv + "}\"\n"
+        + "    access_token: \"\${"
+        + a.accessTokenEnv
+        + "}\"\n"
       ) cfg.mastodon
     )
     + lib.optionalString (cfg.bluesky != [ ]) (
@@ -62,7 +64,7 @@ let
         + a.handle
         + "\"\n"
         + lib.optionalString (a.appPasswordEnv != null) (
-          "    app_password: \"${" + a.appPasswordEnv + "}\"\n"
+          "    app_password: \"\${" + a.appPasswordEnv + "}\"\n"
         )
       ) cfg.bluesky
     )
