@@ -1,4 +1,4 @@
-# AGENTS.md — HermesSocialSummerizer
+# AGENTS.md — social-reader-mcp
 
 This file is the authoritative working guide for any agent operating in this
 repository. It is fully self-contained — do not assume any parent or sibling
@@ -24,7 +24,7 @@ application developer**. When working on application code:
 
 ## What This Project Is
 
-**HermesSocialSummerizer** is a read-only MCP (Model Context Protocol) server
+**social-reader-mcp** is a read-only MCP (Model Context Protocol) server
 that aggregates Mastodon, Bluesky, and Nostr feeds for an LLM agent to fetch
 and summarize. It exposes 14 read-only tools and deliberately has no write
 surface whatsoever.
@@ -49,16 +49,30 @@ a write capability, decline and explain the design intent.
 ## Project Layout
 
 ```
-HermesSocialSummerizer/
+social-reader-mcp/   (repo root: HermesSocialSummerizer/)
   src/
     server.ts           # MCP server — tool definitions and request handlers
     config.ts           # Config loader with ${ENV_VAR} expansion and Zod validation
     state.ts            # Cursor/pagination state (atomic JSON writes, in-memory cache)
+    http-transport.ts   # HTTP transport with bearer-token auth (Streamable HTTP)
+    unit-tests.ts       # CI-safe unit tests (no network, no credentials)
     clients/
       mastodon.ts       # Read-only Mastodon client (native fetch, GET only)
       bluesky.ts        # Read-only Bluesky client (@atproto/api, read methods only)
       nostr.ts          # Read-only Nostr client (nostr-tools SimplePool, subscribe only)
     test.ts             # Integration smoke tests (excluded from production build)
+  pkgs/
+    default.nix         # Package set — re-exports social-reader-mcp and container
+    social-reader-mcp.nix  # buildNpmPackage derivation
+    container.nix       # Docker/OCI image
+  nix/
+    module.nix          # NixOS module (services.social-reader-mcp.*)
+  docs/
+    index.html          # End-user HTML guide
+  .github/workflows/
+    ci.yml              # CI: typecheck, build, unit tests, nix build
+    publish-container.yml  # Publish ghcr.io/genebean/social-reader-mcp on push to main
+  flake.nix             # Nix flake: dev shell, package, container, NixOS module
   config.example.yaml   # Copy to config.yaml and fill in
   config.yaml           # Live config (gitignored — contains secret references)
   .env                  # Actual secret values (gitignored)
@@ -73,20 +87,24 @@ Key architectural points:
 - Clients are long-lived instances built once at startup and reused across tool calls
 - `state.ts` keeps an in-memory cursor store loaded once at startup; disk writes are atomic (tmp + rename)
 - `config.ts` expands `${ENV_VAR}` references in `config.yaml` from environment variables before Zod validation
+- HTTP transport (`SOCIAL_READER_MCP_TRANSPORT=http`) wraps the same Server in `StreamableHTTPServerTransport` with bearer-token auth; the stdio path is completely unchanged when the variable is unset
 
 ---
 
 ## Tooling Contract
 
-This project has **no `flake.nix`** and therefore no Nix dev shell. Tooling
-comes from `npm`:
+This project uses a **Nix flake** for the dev shell, production package, container image, and NixOS module.
 
 ```bash
+nix develop          # enter the dev shell (Node 24, deadnix, nixfmt-tree, pre-commit)
 npm install          # install dependencies into node_modules/
-npm test             # run integration smoke tests against live APIs
+npm run unit         # CI-safe unit tests — no credentials, no network needed
+npm test             # integration smoke tests against live APIs (requires config.yaml + .env)
 npm run typecheck    # type-check without emitting output
-npm run build        # compile TypeScript to dist/ (rarely needed; tsx runs src/ directly)
-npm start            # start the MCP server (normally launched by the MCP host, not manually)
+npm run build        # compile TypeScript to dist/
+npm start            # start the MCP server via stdio (normally launched by the MCP host)
+nix build            # build the production package
+nix build .#container  # build the Docker/OCI image
 ```
 
 The `tsx` binary used at runtime lives at `node_modules/.bin/tsx`. The
@@ -95,7 +113,8 @@ is relocated.
 
 **Pre-push verification:**
 1. `npm run typecheck` — must pass with zero errors
-2. `npm test` — must pass all tests (requires a live `config.yaml` and `.env`)
+2. `npm run unit` — must pass all unit tests
+3. `npm test` — must pass all integration tests (requires a live `config.yaml` and `.env`)
 
 If `npm test` cannot be run (no live credentials available), note this
 explicitly rather than claiming the tests pass.
@@ -144,7 +163,7 @@ enforced by the config loader:
 - `npub` must start with `npub1`
 - At least one relay must be configured per Nostr account
 
-The `SOCIAL_READER_CONFIG` environment variable overrides the default
+The `SOCIAL_READER_MCP_CONFIG` environment variable overrides the default
 `config.yaml` path. `CURSOR_STATE_PATH` overrides the default
 `cursor_state.json` path.
 

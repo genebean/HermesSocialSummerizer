@@ -1,5 +1,9 @@
 # Only read-capable credentials belong in here.
 #
+# HTTP transport auth (SOCIAL_READER_TRANSPORT=http) is configured entirely
+# through process-level environment variables, not this file. See the
+# "Running over HTTP (LAN)" section in README.md for the full env var list.
+#
 #   mastodon: access_token from an OAuth app registered with the
 #             "read" scope ONLY (instance Settings > Development).
 #   bluesky:  app_password is OPTIONAL. Omit it (or leave blank) and

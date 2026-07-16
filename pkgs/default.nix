@@ -3,12 +3,12 @@
   lib ? pkgs.lib,
 }:
 let
-  social-reader = import ./social-reader.nix { inherit pkgs lib; };
+  social-reader-mcp = import ./social-reader-mcp.nix { inherit pkgs lib; };
 in
 {
-  inherit social-reader;
+  inherit social-reader-mcp;
   container = import ./container.nix {
     inherit pkgs lib;
-    package = social-reader;
+    package = social-reader-mcp;
   };
 }

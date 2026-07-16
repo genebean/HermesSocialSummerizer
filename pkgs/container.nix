@@ -5,23 +5,23 @@
 #
 #   {
 #     "mcpServers": {
-#       "social-reader": {
+#       "social-reader-mcp": {
 #         "command": "docker",
 #         "args": [
 #           "run", "--rm", "-i",
 #           "--env-file", "/path/to/.env",
-#           "-e", "SOCIAL_READER_CONFIG=/config/config.yaml",
+#           "-e", "SOCIAL_READER_MCP_CONFIG=/config/config.yaml",
 #           "-e", "CURSOR_STATE_PATH=/data/cursor_state.json",
 #           "-v", "/path/to/config.yaml:/config/config.yaml:ro",
 #           "-v", "/path/to/data:/data",
-#           "social-reader:latest"
+#           "social-reader-mcp:latest"
 #         ]
 #       }
 #     }
 #   }
 #
 # Required mounts / env at runtime:
-#   /config/config.yaml   (SOCIAL_READER_CONFIG) — read-only config with ${ENV_VAR} refs
+#   /config/config.yaml   (SOCIAL_READER_MCP_CONFIG) — read-only config with ${ENV_VAR} refs
 #   /data/                (CURSOR_STATE_PATH)     — writable volume for cursor_state.json
 #   Secret env vars (MASTODON_*_TOKEN, BSKY_*_APP_PW, etc.) via --env-file or -e
 
@@ -32,17 +32,17 @@
 }:
 
 pkgs.dockerTools.buildLayeredImage {
-  name = "social-reader";
+  name = "social-reader-mcp";
   tag = "latest";
 
   contents = [
-    package # the social-reader binary and Node runtime
+    package # the social-reader-mcp binary and Node runtime
     pkgs.cacert # CA certificates for HTTPS (Mastodon) and WSS (Nostr) connections
     pkgs.fakeNss # minimal /etc/passwd and /etc/group so Node.js uid lookups don't fail
   ];
 
   config = {
-    Cmd = [ "${package}/bin/social-reader" ];
+    Cmd = [ "${package}/bin/social-reader-mcp" ];
 
     Env = [
       # Make CA certificates available to OpenSSL-based tools in the container.
@@ -52,7 +52,7 @@ pkgs.dockerTools.buildLayeredImage {
       "NIX_SSL_CERT_FILE=${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt"
       "NODE_ENV=production"
       # Callers must set these at runtime:
-      # SOCIAL_READER_CONFIG=/config/config.yaml
+      # SOCIAL_READER_MCP_CONFIG=/config/config.yaml
       # CURSOR_STATE_PATH=/data/cursor_state.json
       # ... plus platform-specific secret env vars
     ];

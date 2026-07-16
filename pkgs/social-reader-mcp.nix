@@ -1,7 +1,7 @@
 { pkgs, lib }:
 
 pkgs.buildNpmPackage {
-  pname = "social-reader";
+  pname = "social-reader-mcp";
   version = "2.0.0";
 
   src = lib.cleanSourceWith {
@@ -22,7 +22,7 @@ pkgs.buildNpmPackage {
 
   # Recompute after package-lock.json changes:
   #   nix run nixpkgs#prefetch-npm-deps package-lock.json
-  npmDepsHash = "sha256-Hr7PpLIc729RTid3iNibUNC9n6gjwRZAG6TgiGUf1ug=";
+  npmDepsHash = "sha256-kaZmBUP3+ZDtYL344hlW7fNj7WdBx7QoE91Alt8Z2HU=";
 
   # Runs `tsc` via the build script in package.json, emitting to dist/
   npmBuildScript = "build";
@@ -42,10 +42,10 @@ pkgs.buildNpmPackage {
     # resolver finds imports when walking up from $out/lib/dist/*.js
     cp -r dist node_modules package.json $out/lib/
 
-    # The wrapper sets NODE_ENV; runtime paths (SOCIAL_READER_CONFIG,
+    # The wrapper sets NODE_ENV; runtime paths (SOCIAL_READER_MCP_CONFIG,
     # CURSOR_STATE_PATH) are left to the caller so the binary works equally
     # well when launched by a NixOS module wrapper, Docker, or directly.
-    makeWrapper ${pkgs.nodejs_24}/bin/node $out/bin/social-reader \
+    makeWrapper ${pkgs.nodejs_24}/bin/node $out/bin/social-reader-mcp \
       --add-flags "$out/lib/dist/server.js" \
       --set NODE_ENV production
 
@@ -56,6 +56,6 @@ pkgs.buildNpmPackage {
     description = "Read-only social feed MCP server for Mastodon, Bluesky, and Nostr";
     license = licenses.isc;
     platforms = platforms.linux;
-    mainProgram = "social-reader";
+    mainProgram = "social-reader-mcp";
   };
 }

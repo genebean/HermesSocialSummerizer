@@ -60,7 +60,7 @@ export type NostrAccount = z.infer<typeof NostrAccountSchema>;
 export type AppConfig = z.infer<typeof AppConfigSchema>;
 
 export function loadConfig(path?: string): AppConfig {
-  const configPath = path ?? process.env.SOCIAL_READER_CONFIG ?? join(HERE, "config.yaml");
+  const configPath = path ?? process.env.SOCIAL_READER_MCP_CONFIG ?? join(HERE, "config.yaml");
   const rawYaml = parseYaml(readFileSync(configPath, "utf-8")) ?? {};
 
   if (typeof rawYaml !== "object" || Array.isArray(rawYaml)) {

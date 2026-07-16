@@ -9,4 +9,4 @@ jobs:
   publish:
     uses: genebean/.github/.github/workflows/publish-container.yml@main
     with:
-      image: ghcr.io/genebean/social-reader
+      image: ghcr.io/genebean/social-reader-mcp

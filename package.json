@@ -1,5 +1,5 @@
 {
-  "name": "hermessocialsummerizer",
+  "name": "social-reader-mcp",
   "version": "2.0.0",
   "engines": { "node": ">=24" },
   "description": "A read-only MCP server for Mastodon, Bluesky, and Nostr, supporting multiple accounts per platform. Built so that an agent (Hermes, Claude, or anything else speaking MCP) has tools to *fetch and summarize* feeds and never a tool to post, like, follow, or otherwise write anywhere.",
@@ -7,6 +7,7 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "test": "tsx src/test.ts",
+    "unit": "node --import tsx/esm --test src/unit-tests.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
