@@ -8,3 +8,8 @@ on:
 jobs:
   update:
     uses: genebean/.github/.github/workflows/update-flake-lock.yml@main
+    with:
+      npm-lock-file: package-lock.json
+      npmDepsHash-glob: pkgs/social-reader-mcp.nix
+    secrets:
+      token: ${{ secrets.CI_FLAKE_UPDATES }}
