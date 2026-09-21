@@ -7,6 +7,9 @@ on:
 
 jobs:
   publish:
+    permissions:
+      contents: read
+      packages: write
     uses: genebean/.github/.github/workflows/publish-container.yml@main
     with:
       image: ghcr.io/genebean/social-reader-mcp
