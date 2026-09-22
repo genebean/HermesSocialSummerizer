@@ -6,6 +6,25 @@
   "labels": ["dependencies"],
   "packageRules": [
     {
+      "description": "Wait three days before proposing npm releases",
+      "matchDatasources": ["npm"],
+      "minimumReleaseAge": "3 days"
+    },
+    {
+      "description": "Group non-breaking npm minor and patch updates so the lockfile and Nix hash update once",
+      "groupName": "npm non-breaking updates",
+      "groupSlug": "npm-non-breaking",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchJsonata": ["isBreaking != true"]
+    },
+    {
+      "description": "Require explicit Dependency Dashboard approval for npm major updates",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["major"],
+      "dependencyDashboardApproval": true
+    },
+    {
       "description": "Group GitHub Actions updates into a single PR",
       "groupName": "GitHub Actions",
       "matchManagers": ["github-actions"]
