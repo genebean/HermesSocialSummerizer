@@ -21,7 +21,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
       - name: Install npm dependencies
         run: nix develop --command npm ci --include=dev
       - name: Type check
@@ -33,7 +32,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
       - name: Install npm dependencies
         run: nix develop --command npm ci --include=dev
       - name: Build package
@@ -45,7 +43,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: DeterminateSystems/nix-installer-action@v23
-      - uses: DeterminateSystems/magic-nix-cache-action@v15
       - name: Install npm dependencies
         run: nix develop --command npm ci --include=dev
       - name: Run unit tests
