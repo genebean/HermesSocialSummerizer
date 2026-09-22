@@ -22,7 +22,7 @@ pkgs.buildNpmPackage {
 
   # Recompute after package-lock.json changes:
   #   nix run nixpkgs#prefetch-npm-deps package-lock.json
-  npmDepsHash = "sha256-kaZmBUP3+ZDtYL344hlW7fNj7WdBx7QoE91Alt8Z2HU=";
+  npmDepsHash = "sha256-0au49iLjPCMgb7JAKzx5XFFrnE3JD5owvLKO1G07KkA=";
 
   # Runs `tsc` via the build script in package.json, emitting to dist/
   npmBuildScript = "build";
