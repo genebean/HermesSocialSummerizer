@@ -1,0 +1,19 @@
+name: Refresh Renovate npm hash
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+    paths:
+      - package-lock.json
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    uses: genebean/.github/.github/workflows/renovate-npm-hash.yml@main
+    with:
+      npm-lock-file: package-lock.json
+      npmDepsHash-glob: pkgs/social-reader-mcp.nix
+    secrets:
+      token: ${{ secrets.CI_FLAKE_UPDATES }}
