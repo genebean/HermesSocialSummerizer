@@ -141,7 +141,17 @@ export class MastodonReadClient {
   // just this account's own, same role as nostr_get_event for Nostr. The
   // instance's own API already returns the full ancestor chain and
   // descendant tree in one call, no client-side recursion needed.
+  //
+  // Unlike every other method here, `id` is interpolated into the URL
+  // PATH, not passed as a query param via URLSearchParams (which encodes
+  // safely on its own) - a caller-supplied id containing "/", "..", "?",
+  // or "#" could otherwise redirect this authenticated request to a
+  // different endpoint on the same instance, using the same bearer
+  // token. Mastodon status IDs are always decimal digit strings
+  // (Snowflake-style); reject anything else before it ever reaches the
+  // path.
   async statusContext(id: string): Promise<{ ancestors: MastodonPost[]; descendants: MastodonPost[] }> {
+    if (!/^[0-9]+$/.test(id)) throw new Error(`Invalid Mastodon status id: "${id}" (expected decimal digits only)`);
     const context = await withRetry(() => this.get<{ ancestors: RawStatus[]; descendants: RawStatus[] }>(`/api/v1/statuses/${id}/context`));
     return {
       ancestors: context.ancestors.map(simplifyStatus),
