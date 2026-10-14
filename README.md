@@ -232,9 +232,9 @@ Call `list_accounts` first to get the account IDs used by all other tools.
 | Tool | Platform | Description |
 |---|---|---|
 | `list_accounts` | all | Returns configured account IDs grouped by platform |
-| `mastodon_home_timeline` | Mastodon | Home timeline; cursor-tracked to avoid re-reading |
-| `bluesky_timeline` | Bluesky | Following feed; cursor-tracked |
-| `nostr_following_feed` | Nostr | Notes from followed pubkeys; cursor-tracked |
+| `mastodon_home_timeline` | Mastodon | Home timeline; stateless, pass `since_id` yourself |
+| `bluesky_timeline` | Bluesky | Following feed; stateless, pass `since` yourself |
+| `nostr_following_feed` | Nostr | Notes from followed pubkeys; stateless, pass `since_ts` yourself |
 
 ### Engagement history (strong interest signals)
 
@@ -256,14 +256,21 @@ Call `list_accounts` first to get the account IDs used by all other tools.
 |---|---|
 | `reload_config` | Reloads `config.yaml` and reinitializes all clients without restarting the server. Also hot-reloads any client code changes. |
 
-### Nostr enrichment
+### Point lookups and thread context
 
-| Tool | Description |
-|---|---|
-| `nostr_get_event` | Fetch one Nostr event by hex event ID. |
-| `nostr_get_events` | Fetch up to 50 Nostr events by hex event ID in one relay query. |
-| `nostr_get_profile` | Fetch a Nostr kind-0 profile by hex pubkey. |
-| `nostr_get_article` | Fetch a NIP-23 long-form article by `30023:<pubkey>:<d-tag>` address. |
+Dereference a specific item by ID/URI - not a feed, no cursor or pagination
+concept applies. Use these to pull up a reply's parent or a thread's other
+replies when an already-collected candidate doesn't stand alone, e.g. a
+Nostr self-reply carrying the source link for the note above it.
+
+| Tool | Platform | Description |
+|---|---|---|
+| `mastodon_status_context` | Mastodon | Full ancestor chain and reply tree for a status, via the instance's own `/statuses/:id/context` endpoint. |
+| `bluesky_post_thread` | Bluesky | Ancestor chain and reply tree for a post, via `getPostThread` (`depth`/`parent_height` bound how far the AT Protocol server itself walks the tree). |
+| `nostr_get_event` | Nostr | Fetch one Nostr event by hex event ID. |
+| `nostr_get_events` | Nostr | Fetch up to 50 Nostr events by hex event ID in one relay query. |
+| `nostr_get_profile` | Nostr | Fetch a Nostr kind-0 profile by hex pubkey. |
+| `nostr_get_article` | Nostr | Fetch a NIP-23 long-form article by `30023:<pubkey>:<d-tag>` address. |
 
 ### Parameters
 

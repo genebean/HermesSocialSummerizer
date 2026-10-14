@@ -125,6 +125,28 @@ export class BlueskyReadClient {
     };
   }
 
+  // Point lookup by URI, not an account's feed - works identically in
+  // public mode, no login needed, same as nostr_get_event's role for
+  // Nostr. depth/parentHeight bound how far the AT Protocol server itself
+  // walks the tree; this just flattens what comes back.
+  async postThread(uri: string, depth = 6, parentHeight = 10): Promise<{ ancestors: BlueskyPost[]; descendants: BlueskyPost[] }> {
+    const resp = await this.agent.app.bsky.feed.getPostThread({ uri, depth, parentHeight });
+    const thread = resp.data.thread;
+    if (!isThreadViewPost(thread)) return { ancestors: [], descendants: [] };
+
+    const ancestors: BlueskyPost[] = [];
+    let cursor = thread.parent;
+    while (isThreadViewPost(cursor)) {
+      ancestors.unshift(simplifyPost(cursor.post));
+      cursor = cursor.parent;
+    }
+
+    const descendants: BlueskyPost[] = [];
+    collectDescendants(thread, descendants);
+
+    return { ancestors, descendants };
+  }
+
   private async resolveDid(): Promise<string> {
     if (this.did) return this.did;
     const resp = await this.agent.getProfile({ actor: this.handle });
@@ -154,13 +176,39 @@ export class BlueskyReadClient {
   }
 }
 
+// Loosely typed on purpose, same reasoning as BlueskyRecord below - a
+// minimal duck-typed shape rather than importing @atproto/api's internal
+// generated thread types, so a library version bump can't silently break
+// this at the type level. Exported (with the two functions below) for unit
+// testing - this recursive flattening is real logic worth verifying
+// directly, not just via a live call in src/test.ts.
+export interface ThreadNode {
+  post?: SimplifyablePost;
+  parent?: ThreadNode;
+  replies?: ThreadNode[];
+}
+
+// NotFoundPost/BlockedPost (deleted, blocked, or otherwise inaccessible
+// nodes in the tree) have no `post` field - skip them rather than throw.
+export function isThreadViewPost(node: unknown): node is ThreadNode & { post: SimplifyablePost } {
+  return Boolean(node) && typeof node === "object" && (node as ThreadNode).post !== undefined;
+}
+
+export function collectDescendants(node: ThreadNode, out: BlueskyPost[]): void {
+  for (const reply of node.replies ?? []) {
+    if (!isThreadViewPost(reply)) continue;
+    out.push(simplifyPost(reply.post));
+    collectDescendants(reply, out);
+  }
+}
+
 function atUriToWebUrl(uri: string, handle: string): string {
   // AT URI: at://did:plc:xxx/app.bsky.feed.post/rkey
   const rkey = uri.split("/").pop() ?? "";
   return `https://bsky.app/profile/${handle}/post/${rkey}`;
 }
 
-function simplifyPost(post: {
+interface SimplifyablePost {
   uri: string;
   author: { handle: string };
   record: unknown;
@@ -168,7 +216,9 @@ function simplifyPost(post: {
   repostCount?: number;
   replyCount?: number;
   quoteCount?: number;
-}): BlueskyPost {
+}
+
+function simplifyPost(post: SimplifyablePost): BlueskyPost {
   const record = post.record as BlueskyRecord;
   const urls: string[] = [];
   const hashtags: string[] = [];

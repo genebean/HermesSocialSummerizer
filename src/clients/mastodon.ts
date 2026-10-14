@@ -136,6 +136,18 @@ export class MastodonReadClient {
       next_max_id: statuses.length > 0 ? statuses[statuses.length - 1].id : undefined,
     };
   }
+
+  // Point lookup by ID, not a timeline - works for any visible status, not
+  // just this account's own, same role as nostr_get_event for Nostr. The
+  // instance's own API already returns the full ancestor chain and
+  // descendant tree in one call, no client-side recursion needed.
+  async statusContext(id: string): Promise<{ ancestors: MastodonPost[]; descendants: MastodonPost[] }> {
+    const context = await withRetry(() => this.get<{ ancestors: RawStatus[]; descendants: RawStatus[] }>(`/api/v1/statuses/${id}/context`));
+    return {
+      ancestors: context.ancestors.map(simplifyStatus),
+      descendants: context.descendants.map(simplifyStatus),
+    };
+  }
 }
 
 interface RawAccount {
