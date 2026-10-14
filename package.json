@@ -8,6 +8,7 @@
     "start": "tsx src/server.ts",
     "test": "tsx src/test.ts",
     "unit": "node --import tsx/esm --test src/unit-tests.ts",
+    "unit:coverage": "node --import tsx/esm --test --experimental-test-coverage src/unit-tests.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
