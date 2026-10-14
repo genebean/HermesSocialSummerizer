@@ -206,6 +206,20 @@ function createConfiguredServer(): Server {
       },
     },
     {
+      name: "mastodon_status_context",
+      description: "Fetch the ancestor chain and reply tree for a specific Mastodon status - a point lookup by ID, not a timeline. Use this to dereference a reply/parent, e.g. when an already-collected candidate's content doesn't stand alone.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          account_id: { type: "string" },
+          status_id: { type: "string", description: "The status ID to fetch context for." },
+          include_html: INCLUDE_HTML_SCHEMA,
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
+        },
+        required: ["account_id", "status_id"],
+      },
+    },
+    {
       name: "bluesky_timeline",
       description: "Fetch recent following-feed posts for a configured Bluesky account. Returns engagement counts, web URLs, and extracted hashtags/links. Stateless - pass since yourself if you want only what's new since your own last fetch; this server tracks no position for you. Note: the AT Protocol has no native server-side time filter for this feed, so since is applied by paginating and stopping early/filtering client-side here, not by a narrower upstream query.",
       inputSchema: {
@@ -246,6 +260,21 @@ function createConfiguredServer(): Server {
           max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
         required: ["account_id"],
+      },
+    },
+    {
+      name: "bluesky_post_thread",
+      description: "Fetch the ancestor chain and reply tree for a specific Bluesky post - a point lookup by URI, not a timeline. Use this to dereference a reply/parent, e.g. when an already-collected candidate's content doesn't stand alone.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          account_id: { type: "string" },
+          uri: { type: "string", description: "AT URI of the post to fetch context for (e.g. at://did:plc:.../app.bsky.feed.post/...)." },
+          depth: { type: "number", minimum: 0, maximum: 1000, default: 6, description: "How many levels of replies to include." },
+          parent_height: { type: "number", minimum: 0, maximum: 1000, default: 10, description: "How many levels of parent/ancestor posts to include." },
+          max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
+        },
+        required: ["account_id", "uri"],
       },
     },
     {
@@ -441,6 +470,19 @@ function createConfiguredServer(): Server {
         break;
       }
 
+      case "mastodon_status_context": {
+        const statusId = str(a, "status_id");
+        if (!statusId) throw new Error('Missing required argument: "status_id"');
+        const r = await requireClient(clients.mastodon, aid(a), "mastodon").statusContext(statusId);
+        const ih = a.include_html === true;
+        const ml = mxl(a);
+        result = {
+          ancestors: r.ancestors.map((p) => clean(p, ih, ml)),
+          descendants: r.descendants.map((p) => clean(p, ih, ml)),
+        };
+        break;
+      }
+
       case "bluesky_timeline": {
         const accountId = aid(a);
         const client = requireClient(clients.bluesky, accountId, "bluesky");
@@ -463,6 +505,23 @@ function createConfiguredServer(): Server {
           .reposts(lim(a, 40), str(a, "cursor"));
         const ml = mxl(a);
         result = ml ? { ...r, posts: r.posts.map((p) => clean(p, true, ml)) } : r;
+        break;
+      }
+
+      case "bluesky_post_thread": {
+        const uri = str(a, "uri");
+        if (!uri) throw new Error('Missing required argument: "uri"');
+        const depth = Number(a.depth);
+        const parentHeight = Number(a.parent_height);
+        const r = await requireClient(clients.bluesky, aid(a), "bluesky").postThread(
+          uri,
+          Number.isFinite(depth) && depth >= 0 ? depth : undefined,
+          Number.isFinite(parentHeight) && parentHeight >= 0 ? parentHeight : undefined
+        );
+        const ml = mxl(a);
+        result = ml
+          ? { ancestors: r.ancestors.map((p) => clean(p, true, ml)), descendants: r.descendants.map((p) => clean(p, true, ml)) }
+          : r;
         break;
       }
 

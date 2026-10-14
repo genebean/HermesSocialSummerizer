@@ -17,6 +17,7 @@ import assert from "node:assert/strict";
 import { request } from "node:http";
 import { clean, trunc } from "./clean.js";
 import { MAX_LOOKBACK_HOURS, clampLookbackHours, clampSinceTs } from "./lookback.js";
+import { collectDescendants, isThreadViewPost, type BlueskyPost, type ThreadNode } from "./clients/bluesky.js";
 import { isLoopback, tokenMatch, startHttpServer } from "./http-transport.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -197,6 +198,62 @@ describe("clean", () => {
     assert.equal(out.id, "1");
     assert.equal(out.likes, 42);
     assert.ok(Array.isArray(out.tags), "tags should pass through as array");
+  });
+});
+
+// ── Bluesky thread flattening (bluesky_post_thread) ─────────────────────────────
+
+function threadNode(uri: string, replies: ThreadNode[] = []): ThreadNode {
+  return {
+    post: { uri, author: { handle: "user.test" }, record: { text: "t", createdAt: "2026-01-01T00:00:00Z" } },
+    replies,
+  };
+}
+
+describe("isThreadViewPost", () => {
+  test("returns true for a node with a post", () => {
+    assert.ok(isThreadViewPost(threadNode("at://1")));
+  });
+
+  test("returns false for a NotFoundPost/BlockedPost-shaped node (no post field)", () => {
+    assert.ok(!isThreadViewPost({ uri: "at://missing", notFound: true }));
+  });
+
+  test("returns false for null/undefined", () => {
+    assert.ok(!isThreadViewPost(undefined));
+    assert.ok(!isThreadViewPost(null));
+  });
+});
+
+describe("collectDescendants", () => {
+  test("collects direct replies in order", () => {
+    const node = threadNode("at://root", [threadNode("at://reply1"), threadNode("at://reply2")]);
+    const out: BlueskyPost[] = [];
+    collectDescendants(node, out);
+    assert.deepEqual(out.map((p) => p.uri), ["at://reply1", "at://reply2"]);
+  });
+
+  test("recurses into nested replies (reply-to-a-reply)", () => {
+    const node = threadNode("at://root", [threadNode("at://reply1", [threadNode("at://reply1-1")])]);
+    const out: BlueskyPost[] = [];
+    collectDescendants(node, out);
+    assert.deepEqual(out.map((p) => p.uri), ["at://reply1", "at://reply1-1"]);
+  });
+
+  test("skips NotFoundPost/BlockedPost replies instead of throwing", () => {
+    const node: ThreadNode = {
+      post: threadNode("at://root").post,
+      replies: [{ uri: "at://blocked", blocked: true } as unknown as ThreadNode, threadNode("at://visible-reply")],
+    };
+    const out: BlueskyPost[] = [];
+    collectDescendants(node, out);
+    assert.deepEqual(out.map((p) => p.uri), ["at://visible-reply"]);
+  });
+
+  test("returns an empty array for a leaf node with no replies", () => {
+    const out: BlueskyPost[] = [];
+    collectDescendants(threadNode("at://leaf"), out);
+    assert.deepEqual(out, []);
   });
 });
 
