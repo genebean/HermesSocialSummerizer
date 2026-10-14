@@ -29,6 +29,9 @@ export interface MastodonPost {
   text: string;
   text_html: string;
   url: string | null;
+  // null when standalone; the Mastodon REST API has no separate "root"
+  // concept the way Nostr/AT Protocol do - only the immediate parent.
+  in_reply_to_id: string | null;
   favourited: boolean;
   boosted: boolean;
   favourites_count: number;
@@ -184,6 +187,7 @@ interface RawStatus {
   content: string;
   created_at: string;
   url: string | null;
+  in_reply_to_id: string | null;
   favourited: boolean | null;
   reblogged: boolean | null;
   reblog: RawStatus | null;
@@ -227,7 +231,7 @@ function extractUrls(html: string): string[] {
   return [...new Set(urls)];
 }
 
-function simplifyStatus(s: RawStatus): MastodonPost {
+export function simplifyStatus(s: RawStatus): MastodonPost {
   const src = s.reblog ?? s;
   return {
     id: s.id,
@@ -236,6 +240,7 @@ function simplifyStatus(s: RawStatus): MastodonPost {
     text: stripHtml(src.content),
     text_html: src.content,
     url: src.url,
+    in_reply_to_id: src.in_reply_to_id,
     favourited: Boolean(s.favourited),
     boosted: s.reblog !== null,
     favourites_count: src.favourites_count,
