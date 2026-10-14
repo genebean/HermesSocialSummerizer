@@ -45,8 +45,8 @@ jobs:
       - uses: DeterminateSystems/nix-installer-action@v23
       - name: Install npm dependencies
         run: nix develop --command npm ci --include=dev
-      - name: Run unit tests
-        run: nix develop --command npm run unit
+      - name: Run unit tests with coverage
+        run: nix develop --command npm run unit:coverage
 
   npm-audit:
     name: npm audit
