@@ -18,6 +18,7 @@ import { request } from "node:http";
 import { clean, trunc } from "./clean.js";
 import { MAX_LOOKBACK_HOURS, clampLookbackHours, clampSinceTs } from "./lookback.js";
 import { collectDescendants, isThreadViewPost, type BlueskyPost, type ThreadNode } from "./clients/bluesky.js";
+import { MastodonReadClient } from "./clients/mastodon.js";
 import { isLoopback, tokenMatch, startHttpServer } from "./http-transport.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -254,6 +255,35 @@ describe("collectDescendants", () => {
     const out: BlueskyPost[] = [];
     collectDescendants(threadNode("at://leaf"), out);
     assert.deepEqual(out, []);
+  });
+});
+
+// ── MastodonReadClient.statusContext id validation ──────────────────────────────
+//
+// Unlike every other field this client accepts, `id` here gets interpolated
+// into a URL path rather than passed as a URLSearchParams query value - a
+// malicious id could otherwise redirect this authenticated request to a
+// different endpoint on the same instance. The validation runs
+// synchronously before any fetch, so this is testable with no live
+// credentials or network access at all.
+
+describe("MastodonReadClient.statusContext id validation", () => {
+  const client = new MastodonReadClient("https://example.test", "dummy-token");
+
+  test("rejects a path-traversal id before making any request", async () => {
+    await assert.rejects(() => client.statusContext("../../oauth/revoke"), /Invalid Mastodon status id/);
+  });
+
+  test("rejects an id carrying a query-string injection", async () => {
+    await assert.rejects(() => client.statusContext("123?foo=bar"), /Invalid Mastodon status id/);
+  });
+
+  test("rejects a non-numeric id", async () => {
+    await assert.rejects(() => client.statusContext("abc"), /Invalid Mastodon status id/);
+  });
+
+  test("rejects an empty id", async () => {
+    await assert.rejects(() => client.statusContext(""), /Invalid Mastodon status id/);
   });
 });
 
