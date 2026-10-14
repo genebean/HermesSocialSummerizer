@@ -26,6 +26,11 @@ export interface BlueskyPost {
   quote_count: number;
   urls: string[];
   hashtags: string[];
+  // Unset when standalone. Both present on a reply - the AT Protocol
+  // record always carries its own immediate parent and the thread root,
+  // unlike Mastodon which has no separate "root" concept.
+  reply_parent_uri?: string;
+  reply_root_uri?: string;
 }
 
 interface BlueskyFacetFeature {
@@ -40,6 +45,10 @@ interface BlueskyRecord {
   facets?: Array<{
     features: BlueskyFacetFeature[];
   }>;
+  reply?: {
+    root?: { uri?: string };
+    parent?: { uri?: string };
+  };
 }
 
 export class BlueskyReadClient {
@@ -218,7 +227,7 @@ interface SimplifyablePost {
   quoteCount?: number;
 }
 
-function simplifyPost(post: SimplifyablePost): BlueskyPost {
+export function simplifyPost(post: SimplifyablePost): BlueskyPost {
   const record = post.record as BlueskyRecord;
   const urls: string[] = [];
   const hashtags: string[] = [];
@@ -243,5 +252,7 @@ function simplifyPost(post: SimplifyablePost): BlueskyPost {
     quote_count: post.quoteCount ?? 0,
     urls: [...new Set(urls)],
     hashtags: [...new Set(hashtags)],
+    ...(record.reply?.parent?.uri ? { reply_parent_uri: record.reply.parent.uri } : {}),
+    ...(record.reply?.root?.uri ? { reply_root_uri: record.reply.root.uri } : {}),
   };
 }

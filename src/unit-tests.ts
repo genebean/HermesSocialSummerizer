@@ -17,8 +17,8 @@ import assert from "node:assert/strict";
 import { request } from "node:http";
 import { clean, trunc } from "./clean.js";
 import { MAX_LOOKBACK_HOURS, clampLookbackHours, clampSinceTs } from "./lookback.js";
-import { collectDescendants, isThreadViewPost, type BlueskyPost, type ThreadNode } from "./clients/bluesky.js";
-import { MastodonReadClient } from "./clients/mastodon.js";
+import { collectDescendants, isThreadViewPost, simplifyPost, type BlueskyPost, type ThreadNode } from "./clients/bluesky.js";
+import { MastodonReadClient, simplifyStatus } from "./clients/mastodon.js";
 import { isLoopback, tokenMatch, startHttpServer } from "./http-transport.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -255,6 +255,71 @@ describe("collectDescendants", () => {
     const out: BlueskyPost[] = [];
     collectDescendants(threadNode("at://leaf"), out);
     assert.deepEqual(out, []);
+  });
+});
+
+describe("simplifyPost (Bluesky reply fields)", () => {
+  function post(record: Record<string, unknown>) {
+    return simplifyPost({ uri: "at://1", author: { handle: "user.test" }, record });
+  }
+
+  test("sets reply_parent_uri and reply_root_uri from record.reply", () => {
+    const p = post({
+      text: "t",
+      createdAt: "2026-01-01T00:00:00Z",
+      reply: { parent: { uri: "at://parent" }, root: { uri: "at://root" } },
+    });
+    assert.equal(p.reply_parent_uri, "at://parent");
+    assert.equal(p.reply_root_uri, "at://root");
+  });
+
+  test("leaves both unset for a standalone post (no record.reply)", () => {
+    const p = post({ text: "t", createdAt: "2026-01-01T00:00:00Z" });
+    assert.equal(p.reply_parent_uri, undefined);
+    assert.equal(p.reply_root_uri, undefined);
+  });
+});
+
+describe("simplifyStatus (Mastodon reply field)", () => {
+  function rawStatus(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "1",
+      account: { acct: "user@instance.test" },
+      content: "<p>t</p>",
+      created_at: "2026-01-01T00:00:00Z",
+      url: "https://instance.test/@user/1",
+      in_reply_to_id: null,
+      favourited: false,
+      reblogged: false,
+      reblog: null,
+      favourites_count: 0,
+      reblogs_count: 0,
+      replies_count: 0,
+      language: null,
+      mentions: [],
+      tags: [],
+      card: null,
+      ...overrides,
+    } as Parameters<typeof simplifyStatus>[0];
+  }
+
+  test("sets in_reply_to_id from a reply status", () => {
+    const p = simplifyStatus(rawStatus({ in_reply_to_id: "42" }));
+    assert.equal(p.in_reply_to_id, "42");
+  });
+
+  test("leaves in_reply_to_id null for a standalone status", () => {
+    const p = simplifyStatus(rawStatus());
+    assert.equal(p.in_reply_to_id, null);
+  });
+
+  test("reads in_reply_to_id from the reblogged status, not the wrapper", () => {
+    const p = simplifyStatus(
+      rawStatus({
+        reblog: rawStatus({ id: "99", in_reply_to_id: "7" }),
+      })
+    );
+    assert.equal(p.in_reply_to_id, "7");
   });
 });
 
