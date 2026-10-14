@@ -16,6 +16,7 @@ import { test, describe, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { request } from "node:http";
 import { clean, trunc } from "./clean.js";
+import { MAX_LOOKBACK_HOURS, clampLookbackHours, clampSinceTs } from "./lookback.js";
 import { isLoopback, tokenMatch, startHttpServer } from "./http-transport.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -94,6 +95,54 @@ describe("trunc", () => {
   test("suffix reports correct char count", () => {
     const result = trunc("x".repeat(100), 40);
     assert.ok(result.includes("…[+60 chars]"), `wrong count in: ${result}`);
+  });
+});
+
+// ── lookback (hard API-protection ceiling) ──────────────────────────────────────
+
+describe("clampLookbackHours", () => {
+  test("passes through a requested value under the ceiling", () => {
+    assert.equal(clampLookbackHours(12, 24), 12);
+  });
+
+  test("clamps a requested value over the ceiling", () => {
+    assert.equal(clampLookbackHours(MAX_LOOKBACK_HOURS * 10, 24), MAX_LOOKBACK_HOURS);
+  });
+
+  test("uses the fallback when nothing is requested", () => {
+    assert.equal(clampLookbackHours(undefined, 24), 24);
+  });
+
+  test("uses the fallback for a non-finite or non-positive request", () => {
+    assert.equal(clampLookbackHours(NaN, 24), 24);
+    assert.equal(clampLookbackHours(0, 24), 24);
+    assert.equal(clampLookbackHours(-5, 24), 24);
+  });
+
+  test("clamps a fallback that itself exceeds the ceiling", () => {
+    assert.equal(clampLookbackHours(undefined, MAX_LOOKBACK_HOURS * 10), MAX_LOOKBACK_HOURS);
+  });
+});
+
+describe("clampSinceTs", () => {
+  test("passes through a recent timestamp unchanged", () => {
+    const recent = Math.floor(Date.now() / 1000) - 3600;
+    assert.equal(clampSinceTs(recent), recent);
+  });
+
+  test("clamps a timestamp older than the ceiling up to the floor", () => {
+    const tenYearsAgo = Math.floor(Date.now() / 1000) - 10 * 365 * 24 * 3600;
+    const result = clampSinceTs(tenYearsAgo);
+    const floorTs = Math.floor(Date.now() / 1000) - MAX_LOOKBACK_HOURS * 3600;
+    assert.ok(result !== undefined && result >= floorTs, `expected clamped to floor, got ${result}`);
+    assert.notEqual(result, tenYearsAgo);
+  });
+
+  test("returns undefined for a missing/non-numeric/non-positive value", () => {
+    assert.equal(clampSinceTs(undefined), undefined);
+    assert.equal(clampSinceTs("not-a-number"), undefined);
+    assert.equal(clampSinceTs(0), undefined);
+    assert.equal(clampSinceTs(-100), undefined);
   });
 });
 

@@ -12,11 +12,11 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 
 import { loadConfig } from "./config.js";
-import { loadState, saveState, getCursor, setCursor } from "./state.js";
 import { MastodonReadClient } from "./clients/mastodon.js";
 import { BlueskyReadClient } from "./clients/bluesky.js";
 import { NostrReadClient, npubToHex } from "./clients/nostr.js";
 import { clean } from "./clean.js";
+import { MAX_LOOKBACK_HOURS, clampLookbackHours, clampSinceTs } from "./lookback.js";
 
 // ── Client registries ────────────────────────────────────────────────────────
 
@@ -89,7 +89,16 @@ function mp(a: Record<string, unknown>): number {
 //
 // Handler closures reference the module-level `config` and `clients` variables,
 // so all Server instances — whether one (stdio) or many (HTTP) — share the same
-// social platform connections and cursor state file.
+// social platform connections.
+
+// Caller-supplied "since" is a courtesy, not a trust boundary: this server
+// holds the actual platform credentials, so it - not whatever calls it -
+// is responsible for making sure a request can't reach back further than
+// is reasonable before it ever hits an upstream API. See lookback.ts for
+// the actual MAX_LOOKBACK_HOURS ceiling (a generous week, since this is an
+// API-abuse backstop, not report-relevance logic - a caller that wants a
+// tighter window for its own purposes, e.g. a daily digest, enforces that
+// itself on top of this).
 
 const LIMIT_SCHEMA = { type: "number", minimum: 1, maximum: 200 } as const;
 const MAX_PAGES_SCHEMA = {
@@ -97,12 +106,19 @@ const MAX_PAGES_SCHEMA = {
   minimum: 1,
   maximum: 10,
   default: 1,
-  description: "Internally fetch up to this many pages and concatenate the results. Use 2–5 for catch-up scans when many posts may have accumulated since the last cursor. Default: 1 (single-page, current behaviour).",
+  description: "Internally fetch up to this many pages and concatenate the results. Use 2–5 when catching up after a gap. Default: 1 (single-page, current behaviour).",
 } as const;
-const ADVANCE_CURSOR_SCHEMA = {
-  type: "boolean",
-  description: "If false, fetch posts without advancing the cursor (safe for debugging or partial analysis). Default: true.",
-  default: true,
+const SINCE_ID_SCHEMA = {
+  type: "string",
+  description: "Only return posts newer than this post ID (exclusive) - the caller's own last-seen position, not anything this server tracks.",
+} as const;
+const SINCE_SCHEMA = {
+  type: "string",
+  description: "Only return posts newer than this ISO 8601 timestamp (exclusive) - the caller's own last-seen position, not anything this server tracks.",
+} as const;
+const SINCE_TS_SCHEMA = {
+  type: "number",
+  description: "Only return notes newer than this unix timestamp (exclusive) - the caller's own last-seen position, not anything this server tracks. Takes precedence over hours when both are given.",
 } as const;
 const INCLUDE_HTML_SCHEMA = {
   type: "boolean",
@@ -130,13 +146,13 @@ function createConfiguredServer(): Server {
     },
     {
       name: "mastodon_home_timeline",
-      description: "Fetch recent home-timeline posts for a configured Mastodon account. Returns plain text with engagement counts, mentions, hashtags, and link previews. HTML fields omitted by default.",
+      description: "Fetch recent home-timeline posts for a configured Mastodon account. Returns plain text with engagement counts, mentions, hashtags, and link previews. HTML fields omitted by default. Stateless - pass since_id yourself if you want only what's new since your own last fetch; this server tracks no position for you.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
-          advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          since_id: SINCE_ID_SCHEMA,
           max_pages: MAX_PAGES_SCHEMA,
           include_html: INCLUDE_HTML_SCHEMA,
           max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
@@ -191,13 +207,13 @@ function createConfiguredServer(): Server {
     },
     {
       name: "bluesky_timeline",
-      description: "Fetch recent following-feed posts for a configured Bluesky account. Returns engagement counts, web URLs, and extracted hashtags/links.",
+      description: "Fetch recent following-feed posts for a configured Bluesky account. Returns engagement counts, web URLs, and extracted hashtags/links. Stateless - pass since yourself if you want only what's new since your own last fetch; this server tracks no position for you. Note: the AT Protocol has no native server-side time filter for this feed, so since is applied by paginating and stopping early/filtering client-side here, not by a narrower upstream query.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
           limit: { ...LIMIT_SCHEMA, default: 40 },
-          advance_cursor: ADVANCE_CURSOR_SCHEMA,
+          since: SINCE_SCHEMA,
           max_pages: MAX_PAGES_SCHEMA,
           max_content_length: MAX_CONTENT_LENGTH_SCHEMA,
         },
@@ -234,14 +250,19 @@ function createConfiguredServer(): Server {
     },
     {
       name: "nostr_following_feed",
-      description: "Fetch recent notes from accounts this Nostr npub follows. Returns nostr URIs, author npubs, hashtags, URLs, and reply/root thread IDs.",
+      description: "Fetch recent notes from accounts this Nostr npub follows. Returns nostr URIs, author npubs, hashtags, URLs, and reply/root thread IDs. Stateless - pass since_ts yourself if you want only what's new since your own last fetch; this server tracks no position for you.",
       inputSchema: {
         type: "object",
         properties: {
           account_id: { type: "string" },
-          hours: { type: "number", default: 24 },
+          hours: {
+            type: "number",
+            default: 24,
+            maximum: MAX_LOOKBACK_HOURS,
+            description: `Only used when since_ts is omitted. Capped at ${MAX_LOOKBACK_HOURS} (one week) regardless of what's requested - an API-protection ceiling, not report-relevance logic.`,
+          },
+          since_ts: SINCE_TS_SCHEMA,
           limit: { ...LIMIT_SCHEMA, default: 100 },
-          advance_cursor: ADVANCE_CURSOR_SCHEMA,
           max_pages: MAX_PAGES_SCHEMA,
           include_engagement: {
             type: "boolean",
@@ -345,22 +366,6 @@ function createConfiguredServer(): Server {
       },
     },
     {
-      name: "mark_seen",
-      description: "Advance the cursor for a feed without fetching — call after analyzing posts retrieved with advance_cursor: false. cursor_value is: the post id for Mastodon, the created_at ISO string for Bluesky, or the created_at unix timestamp for Nostr.",
-      inputSchema: {
-        type: "object",
-        properties: {
-          platform: { type: "string", enum: ["mastodon", "bluesky", "nostr"] },
-          account_id: { type: "string" },
-          cursor_value: {
-            description: "Mastodon: post id (string). Bluesky: created_at ISO string. Nostr: created_at unix timestamp (number).",
-            oneOf: [{ type: "string" }, { type: "number" }],
-          },
-        },
-        required: ["platform", "account_id", "cursor_value"],
-      },
-    },
-    {
       name: "reload_config",
       description: "Reload config.yaml and reinitialize all clients without restarting the server.",
       inputSchema: { type: "object", properties: {} },
@@ -399,19 +404,7 @@ function createConfiguredServer(): Server {
       case "mastodon_home_timeline": {
         const accountId = aid(a);
         const client = requireClient(clients.mastodon, accountId, "mastodon");
-        const state = loadState();
-        const cursor = getCursor(state, "mastodon", accountId);
-        const posts = await client.homeTimeline(lim(a, 40), cursor.since_id, mp(a));
-        if (a.advance_cursor !== false && posts.length > 0) {
-          let maxId = posts[0].id;
-          for (const p of posts) {
-            try {
-              if (BigInt(p.id) > BigInt(maxId)) maxId = p.id;
-            } catch { /* non-integer id, skip */ }
-          }
-          setCursor(state, "mastodon", accountId, { since_id: maxId });
-          saveState(state);
-        }
+        const posts = await client.homeTimeline(lim(a, 40), str(a, "since_id"), mp(a));
         const ih = a.include_html === true;
         const ml = mxl(a);
         result = posts.map((p) => clean(p, ih, ml));
@@ -451,14 +444,7 @@ function createConfiguredServer(): Server {
       case "bluesky_timeline": {
         const accountId = aid(a);
         const client = requireClient(clients.bluesky, accountId, "bluesky");
-        const state = loadState();
-        const cursor = getCursor(state, "bluesky", accountId);
-        const posts = await client.timeline(lim(a, 40), cursor.since, mp(a));
-        if (a.advance_cursor !== false && posts.length > 0) {
-          const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
-          setCursor(state, "bluesky", accountId, { since: maxTs });
-          saveState(state);
-        }
+        const posts = await client.timeline(lim(a, 40), str(a, "since"), mp(a));
         const ml = mxl(a);
         result = ml ? posts.map((p) => clean(p, true, ml)) : posts;
         break;
@@ -483,20 +469,13 @@ function createConfiguredServer(): Server {
       case "nostr_following_feed": {
         const accountId = aid(a);
         const client = requireClient(clients.nostr, accountId, "nostr");
-        const state = loadState();
-        const cursor = getCursor(state, "nostr", accountId);
         const posts = await client.followingFeed(
-          (a.hours as number) ?? 24,
+          clampLookbackHours(a.hours as number | undefined, 24),
           lim(a, 100),
-          cursor.since_ts,
+          clampSinceTs(a.since_ts),
           a.include_engagement === true,
           mp(a)
         );
-        if (a.advance_cursor !== false && posts.length > 0) {
-          const maxTs = posts.reduce((m, p) => (p.created_at > m ? p.created_at : m), posts[0].created_at);
-          setCursor(state, "nostr", accountId, { since_ts: maxTs });
-          saveState(state);
-        }
         const ml = mxl(a);
         result = ml ? posts.map((p) => clean(p, true, ml)) : posts;
         break;
@@ -550,41 +529,6 @@ function createConfiguredServer(): Server {
         const r = await requireClient(clients.nostr, aid(a), "nostr").getArticle(articleAddr);
         const ml = mxl(a);
         result = r && ml ? clean(r, true, ml) : r;
-        break;
-      }
-
-      case "mark_seen": {
-        const platform = a.platform;
-        if (platform !== "mastodon" && platform !== "bluesky" && platform !== "nostr") {
-          throw new Error(`Invalid platform: "${String(platform)}". Must be mastodon, bluesky, or nostr.`);
-        }
-        const accountId = aid(a);
-        const cursorValue = a.cursor_value;
-        const state = loadState();
-
-        if (platform === "mastodon") {
-          if (typeof cursorValue !== "string" || !cursorValue) {
-            throw new Error("For mastodon, cursor_value must be a post id string.");
-          }
-          requireClient(clients.mastodon, accountId, "mastodon");
-          setCursor(state, "mastodon", accountId, { since_id: cursorValue });
-        } else if (platform === "bluesky") {
-          if (typeof cursorValue !== "string" || !cursorValue) {
-            throw new Error("For bluesky, cursor_value must be a created_at ISO string.");
-          }
-          requireClient(clients.bluesky, accountId, "bluesky");
-          setCursor(state, "bluesky", accountId, { since: cursorValue });
-        } else {
-          const ts = Number(cursorValue);
-          if (!Number.isFinite(ts) || ts <= 0) {
-            throw new Error("For nostr, cursor_value must be a unix timestamp (the note's created_at).");
-          }
-          requireClient(clients.nostr, accountId, "nostr");
-          setCursor(state, "nostr", accountId, { since_ts: ts });
-        }
-
-        saveState(state);
-        result = { platform, account_id: accountId, cursor_value: cursorValue };
         break;
       }
 

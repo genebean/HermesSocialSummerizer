@@ -255,7 +255,6 @@ Call `list_accounts` first to get the account IDs used by all other tools.
 | Tool | Description |
 |---|---|
 | `reload_config` | Reloads `config.yaml` and reinitializes all clients without restarting the server. Also hot-reloads any client code changes. |
-| `mark_seen` | Advances a platform/account timeline cursor after external processing of posts fetched with `advance_cursor: false`. |
 
 ### Nostr enrichment
 
@@ -271,7 +270,8 @@ Call `list_accounts` first to get the account IDs used by all other tools.
 Every tool except `list_accounts` and `reload_config` requires `account_id`
 (a string matching one of the IDs in `config.yaml`). Timeline tools accept an
 optional `limit` (default 40 for Mastodon/Bluesky, 100 for Nostr).
-`nostr_following_feed` also accepts `hours` (default 24).
+`nostr_following_feed` also accepts `hours` (default 24, capped at one week
+regardless of what's requested).
 
 Response-size controls are available for agent-friendly summaries:
 
@@ -283,13 +283,23 @@ Response-size controls are available for agent-friendly summaries:
   fields are truncated with a suffix such as `…[+123 chars]` so the caller can
   tell how much text was omitted.
 
-## Cursor state
+## No server-side cursor
 
 The three timeline tools (`mastodon_home_timeline`, `bluesky_timeline`,
-`nostr_following_feed`) track a cursor in `cursor_state.json` so successive
-calls return only new content rather than re-reading the same window. The
-cursor advances on every successful fetch. Delete `cursor_state.json` to
-reset to a fresh read.
+`nostr_following_feed`) are stateless - this server tracks no "last seen"
+position for any caller. Pass `since_id` (Mastodon), `since` (Bluesky), or
+`since_ts` (Nostr) yourself if you want only what's new since your own
+previous fetch; omit it for the most recent window. This server's own role
+is limited to protecting the upstream API credentials it holds - every
+timeline tool enforces a hard ceiling on lookback depth (one week) and
+volume (`limit`/`max_pages`) regardless of what a caller asks for, but
+remembering where a particular consumer left off is entirely that
+consumer's own responsibility.
+
+Note: the AT Protocol has no native server-side time filter for Bluesky's
+feed, so `since` there is applied by paginating and stopping early /
+filtering client-side, not by a narrower upstream query - the other two
+platforms get a genuine server-side bound.
 
 ## Engagement signal notes
 
